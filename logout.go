@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"time"
 
@@ -37,9 +38,16 @@ func (fe *Frontend) LogoutHandler() fox.HandlerFunc {
 		w := c.Writer()
 		w.Header().Set("Cache-Control", "no-store")
 
-		// A logout comes from a link or a form, which cannot send the CSRF header, so only CrossOriginProtection applies.
+		// A logout comes from a link or a form, which cannot send the CSRF header.
 		if err := rp.cop.Check(r); err != nil {
 			rp.logRejected(r, "cross-site request", err)
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		// http.CrossOriginProtection does not check the GET requests, which may reach the end session endpoint without a
+		// session.
+		if safeMethod(r.Method) && !rp.trustedOrigin(r) {
+			rp.logRejected(r, "cross-site request", errCrossOrigin)
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
@@ -72,7 +80,7 @@ func (rp *relyingParty) logout(w http.ResponseWriter, r *http.Request, verify fu
 	s, st, err := rp.readSession(r.Context(), r.Cookies())
 	if errors.Is(err, errNoSession) {
 		rp.cookie.clear(w.Header(), st.chunks)
-		http.Redirect(w, r, rp.postLogoutURL(), http.StatusSeeOther)
+		http.Redirect(w, r, rp.endSessionURL(""), http.StatusSeeOther)
 		return
 	}
 	if err != nil {
@@ -103,12 +111,32 @@ func (rp *relyingParty) endSessionURL(idToken string) string {
 	}
 	q := u.Query()
 	q.Set("client_id", rp.oauth2.ClientID)
-	q.Set("id_token_hint", idToken)
+	if idToken != "" {
+		q.Set("id_token_hint", idToken)
+	}
 	if rp.postLogoutRedirectURL != "" {
 		q.Set("post_logout_redirect_uri", rp.postLogoutRedirectURL)
 	}
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+func safeMethod(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
+}
+
+// trustedOrigin reports whether r is a same-origin request, or a request from a trusted origin, as
+// [http.CrossOriginProtection] checks it.
+func (rp *relyingParty) trustedOrigin(r *http.Request) bool {
+	if sameOrigin(r) {
+		return true
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		// A navigation has no Origin header.
+		return len(rp.cfg.trustedOrigins) > 0 && r.Header.Get("Sec-Fetch-Site") == "same-site"
+	}
+	return slices.Contains(rp.cfg.trustedOrigins, origin)
 }
 
 func (rp *relyingParty) postLogoutURL() string {

@@ -93,7 +93,7 @@ func (fe *Frontend) serve(c *fox.Context, next fox.HandlerFunc) {
 	}
 	if s == nil && !allowAnonymous(route) {
 		addSetCookies(c.Writer().Header(), pending)
-		rp.cfg.unauthorized(c)
+		rp.serveAnonymous(c, rp.cfg.unauthorized)
 		return
 	}
 	forward(c, next, rp.authenticatedRequest(r, s, resources), pending)
@@ -130,6 +130,21 @@ func (rp *relyingParty) authenticatedRequest(r *http.Request, s *session, resour
 	req.Header = r.Header.Clone()
 	removeOwnCookies(req.Header)
 	return req
+}
+
+// serveAnonymous calls h with r as an anonymous request, without the BFF cookies, the identity headers and a session.
+func (rp *relyingParty) serveAnonymous(c *fox.Context, h fox.HandlerFunc) {
+	r := c.Request()
+	req := rp.authenticatedRequest(r, nil, nil)
+	if len(rp.cfg.identityHeaders) > 0 {
+		rp.setIdentityHeaders(r, req.Header, nil)
+	}
+	// Only the middleware has written the response so far. Its cookies are added after h, like the pending cookies of
+	// next.
+	header := c.Writer().Header()
+	pending := http.Header{"Set-Cookie": header["Set-Cookie"]}
+	delete(header, "Set-Cookie")
+	forward(c, h, req, pending)
 }
 
 // forward calls next with req, and adds the pending cookies to the response.

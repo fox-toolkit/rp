@@ -147,11 +147,31 @@ func TestLogoutMethods(t *testing.T) {
 }
 
 func TestLogoutWithoutSession(t *testing.T) {
+	cases := []struct {
+		name   string
+		method string
+		header http.Header
+		code   int
+	}{
+		{name: "same-origin get", method: http.MethodGet, header: http.Header{"Sec-Fetch-Site": {"same-origin"}}, code: http.StatusSeeOther},
+		{name: "typed url", method: http.MethodGet, header: http.Header{"Sec-Fetch-Site": {"none"}}, code: http.StatusSeeOther},
+		{name: "same-origin post", method: http.MethodPost, header: http.Header{"Origin": {appOrigin}}, code: http.StatusSeeOther},
+		{name: "cross-site get", method: http.MethodGet, header: http.Header{"Sec-Fetch-Site": {"cross-site"}}, code: http.StatusForbidden},
+		{name: "same-site get", method: http.MethodGet, header: http.Header{"Sec-Fetch-Site": {"same-site"}}, code: http.StatusForbidden},
+		{name: "cross-site post", method: http.MethodPost, header: http.Header{"Sec-Fetch-Site": {"cross-site"}}, code: http.StatusForbidden},
+	}
 	e := newTestEnv(t, oidctest.Options{})
 	e.mountLogout(t)
-	rec := e.do(http.MethodGet, "/bff/logout", nil, nil)
-	assert.Equal(t, http.StatusSeeOther, rec.Code)
-	assert.Equal(t, appOrigin+"/", rec.Header().Get("Location"))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := e.do(tc.method, "/bff/logout", nil, tc.header)
+			assert.Equal(t, tc.code, rec.Code)
+			if tc.code == http.StatusSeeOther {
+				q := url.Values{"client_id": {"app"}, "post_logout_redirect_uri": {appOrigin + "/"}}
+				assert.Equal(t, e.idp.URL+"/end_session?"+q.Encode(), rec.Header().Get("Location"))
+			}
+		})
+	}
 	assert.Empty(t, e.idp.Revoked())
 }
 

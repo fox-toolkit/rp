@@ -62,10 +62,10 @@ func NewProxy(client Client, aead AEAD, opts ...ProxyOption) (*Proxy, error) {
 // document, starts the login, which then returns to the URL of the request. The other requests without a valid session are handled by the unauthorized handler (see
 // [WithUnauthorizedHandler]), unless the route has [AllowAnonymous].
 //
-// The middleware responds with 403 Forbidden when a rule of [WithAccessRule] or [Require] denies access to the user,
-// and to a cross-origin request with an unsafe method and a session. On a route with [AllowAnonymous], a user denied
-// access by a rule is handled as a request without a session. The middleware sets the headers of [WithIdentityHeader]
-// on the request passed to the next handler.
+// The middleware calls the forbidden handler (see [WithForbiddenHandler]) when a rule of [WithAccessRule] or [Require]
+// denies access to the user, and responds with 403 Forbidden to a cross-origin request with an unsafe method and a
+// session. On a route with [AllowAnonymous], a user denied access by a rule is handled as a request without a session.
+// The middleware sets the headers of [WithIdentityHeader] on the request passed to the next handler.
 //
 // When Pushed Authorization Requests (PAR, RFC 9126) are used, each login sends a request to the pushed authorization
 // request endpoint of the provider. If this request fails, the middleware responds with 502 Bad Gateway.
@@ -89,7 +89,7 @@ func (p *Proxy) serve(c *fox.Context, next fox.HandlerFunc) {
 	if s == nil && !allowAnonymous(route) {
 		addSetCookies(w.Header(), pending)
 		if !navigation(r) {
-			rp.cfg.unauthorized(c)
+			rp.serveAnonymous(c, rp.cfg.unauthorized)
 			return
 		}
 		returnURL, err := p.returnURL(r)
@@ -109,12 +109,23 @@ func (p *Proxy) serve(c *fox.Context, next fox.HandlerFunc) {
 		if len(rp.cfg.rules) > 0 || len(rules) > 0 || len(rp.cfg.identityHeaders) > 0 {
 			var err error
 			claims, err = s.claims()
-			if err != nil || !allowed(claims, rp.cfg.rules, rules) {
+			if err != nil {
+				addSetCookies(w.Header(), pending)
+				rp.logFailed(r, "session claims", err)
+				internalError(w)
+				return
+			}
+			if !allowed(claims, rp.cfg.rules, rules) {
 				if !allowAnonymous(route) {
 					// Do not delete the session. The user may have access to other routes.
 					addSetCookies(w.Header(), pending)
+					if err := rp.cop.Check(r); err != nil {
+						rp.logRejected(r, "cross-site request", err)
+						http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+						return
+					}
 					rp.logRejected(r, "access denied", errAccessDenied)
-					http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+					rp.serveAnonymous(c, rp.cfg.forbidden)
 					return
 				}
 				s, claims = nil, nil
@@ -242,17 +253,21 @@ func headerName(name string) string {
 }
 
 // CallbackHandler returns the handler of the redirect URL. It completes the login, creates a new session and redirects
-// to the URL of the request that started the login. It responds with 403 Forbidden without a session if the provider
-// returns an error, such as access_denied, or if a rule of [WithAccessRule] denies access to the user.
+// to the URL of the request that started the login. It calls the forbidden handler (see [WithForbiddenHandler]) without
+// a session if the provider returns an error, such as access_denied, or if a rule of [WithAccessRule] denies access to
+// the user.
 func (p *Proxy) CallbackHandler() fox.HandlerFunc {
 	rules := p.rp.cfg.rules
 	if len(rules) == 0 {
-		return p.rp.callbackHandler(nil, true)
+		return p.rp.callbackHandler(nil, p.rp.cfg.forbidden)
 	}
-	return p.rp.callbackHandler(func(s *session) bool {
+	return p.rp.callbackHandler(func(s *session) (bool, error) {
 		claims, err := s.claims()
-		return err == nil && allowed(claims, rules)
-	}, true)
+		if err != nil {
+			return false, err
+		}
+		return allowed(claims, rules), nil
+	}, p.rp.cfg.forbidden)
 }
 
 // LogoutHandler returns a handler that ends the session, revokes its refresh token and redirects to the end session
