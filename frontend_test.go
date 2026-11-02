@@ -355,6 +355,11 @@ func TestTrustedOrigins(t *testing.T) {
 		header := http.Header{"Sec-Fetch-Site": {"same-site"}, "Origin": {"https://spa.example.com"}}
 		rec := e.doForm(http.MethodPost, "/bff/logout", cookies, header, url.Values{"csrf_token": {s.LogoutCSRFToken}})
 		assert.Equal(t, http.StatusSeeOther, rec.Code)
+		rec = e.do(http.MethodGet, "/bff/logout", nil, http.Header{"Sec-Fetch-Site": {"same-site"}})
+		assert.Equal(t, http.StatusSeeOther, rec.Code)
+		assert.Equal(t, http.StatusForbidden, e.do(http.MethodGet, "/bff/logout", nil, http.Header{"Sec-Fetch-Site": {"cross-site"}}).Code)
+		untrusted := http.Header{"Sec-Fetch-Site": {"same-site"}, "Origin": {"https://evil.example.com"}}
+		assert.Equal(t, http.StatusForbidden, e.do(http.MethodGet, "/bff/logout", nil, untrusted).Code)
 	})
 
 	t.Run("return url", func(t *testing.T) {

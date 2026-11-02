@@ -52,7 +52,7 @@ func (fe *Frontend) UserHandler() fox.HandlerFunc {
 			return
 		}
 		if s == nil {
-			rp.cfg.unauthorized(c)
+			rp.serveAnonymous(c, rp.cfg.unauthorized)
 			return
 		}
 

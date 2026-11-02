@@ -263,13 +263,13 @@ func (rp *relyingParty) trimPendingLogins(h http.Header, cookies []*http.Cookie)
 // to the return URL. If the provider returns an error, such as login_required for prompt=none, it redirects to the
 // return URL without a new session.
 func (fe *Frontend) CallbackHandler() fox.HandlerFunc {
-	return fe.rp.callbackHandler(nil, false)
+	return fe.rp.callbackHandler(nil, nil)
 }
 
 // callbackHandler returns the handler of the redirect URL. When allow is not nil and returns false for the new session,
-// the login is refused with 403 Forbidden. An error of the provider is answered with 403 Forbidden when forbidError is
-// true, and with a redirect to the return URL otherwise.
-func (rp *relyingParty) callbackHandler(allow func(*session) bool, forbidError bool) fox.HandlerFunc {
+// forbidden refuses the login. An error of the provider goes to forbidden, or redirects to the return URL when
+// forbidden is nil.
+func (rp *relyingParty) callbackHandler(allow func(*session) (bool, error), forbidden fox.HandlerFunc) fox.HandlerFunc {
 	return func(c *fox.Context) {
 		r := c.Request()
 		w := c.Writer()
@@ -307,8 +307,8 @@ func (rp *relyingParty) callbackHandler(allow func(*session) bool, forbidError b
 		}
 		if e := q.Get("error"); e != "" {
 			rp.logger.InfoContext(r.Context(), "provider returned an error", "path", r.URL.Path, "error", e)
-			if forbidError {
-				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			if forbidden != nil {
+				rp.serveAnonymous(c, forbidden)
 				return
 			}
 			http.Redirect(w, r, ls.ReturnURL, http.StatusFound)
@@ -326,12 +326,21 @@ func (rp *relyingParty) callbackHandler(allow func(*session) bool, forbidError b
 			}
 			return
 		}
-		if allow != nil && !allow(s) {
-			// Do not revoke the refresh token. Some providers, such as Keycloak, would also revoke the tokens of the other
-			// sessions with the same sid.
-			rp.logRejected(r, "access denied", errAccessDenied)
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-			return
+		if allow != nil {
+			var ok bool
+			ok, err = allow(s)
+			if err != nil {
+				rp.logFailed(r, "session claims", err)
+				internalError(w)
+				return
+			}
+			if !ok {
+				// Do not revoke the refresh token. Some providers, such as Keycloak, would also revoke the tokens of the
+				// other sessions with the same sid.
+				rp.logRejected(r, "access denied", errAccessDenied)
+				rp.serveAnonymous(c, forbidden)
+				return
+			}
 		}
 
 		// Replace any previous session of the client. The session cookie is usually not sent on the cross-site redirect

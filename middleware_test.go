@@ -485,3 +485,19 @@ func TestMiddlewareRefreshBearerUnderDPoP(t *testing.T) {
 	e.idp.Update(func(o *oidctest.Options) { o.IgnoreDPoP = false })
 	assert.Equal(t, http.StatusOK, e.do(http.MethodGet, "/api", cookies, nil).Code)
 }
+
+func TestUnauthorizedHandlerCookies(t *testing.T) {
+	var cookie string
+	e := newTestEnv(t, oidctest.Options{}, WithUnauthorizedHandler(func(c *fox.Context) {
+		cookie = c.Request().Header.Get("Cookie")
+		c.Writer().Header().Del("Set-Cookie")
+		c.Writer().Header().Add("Set-Cookie", "__Host-Http-BFF.0=forged")
+		c.Writer().WriteHeader(http.StatusTeapot)
+	}))
+	e.mount(t, "/api")
+	cookies := []*http.Cookie{{Name: "__Host-Http-BFF.0", Value: "1.x"}, {Name: "app", Value: "1"}}
+	rec := e.do(http.MethodGet, "/api", cookies, nil)
+	assert.Equal(t, http.StatusTeapot, rec.Code)
+	assert.Equal(t, "app=1", cookie)
+	assert.Equal(t, []string{"__Host-Http-BFF.0=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict"}, rec.Header().Values("Set-Cookie"))
+}

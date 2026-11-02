@@ -197,6 +197,72 @@ func TestProxyCallbackProviderError(t *testing.T) {
 	assert.False(t, hasLine(rec.Header().Values("Set-Cookie"), "__Host-Http-Proxy.0="))
 }
 
+func TestProxyForbiddenHandler(t *testing.T) {
+	var seen http.Header
+	var identified bool
+	forbidden := WithForbiddenHandler(func(c *fox.Context) {
+		seen = c.Request().Header.Clone()
+		_, identified = UserClaims(c.Request().Context())
+		c.Writer().Header().Del("Set-Cookie")
+		c.Writer().Header().Add("Set-Cookie", "__Host-Http-Proxy.0=forged")
+		c.Writer().WriteHeader(http.StatusTeapot)
+	})
+	t.Run("route rule", func(t *testing.T) {
+		e := newProxyEnv(t, oidctest.Options{Claims: map[string]any{"groups": []any{"dev"}}}, forbidden, WithIdentityHeader("X-Sub", "sub"))
+		e.mount(t, "/admin", Require(Group("admin")))
+		e.mount(t, "/public", AllowAnonymous(), Require(Group("admin")))
+		cookies := append(e.loggedIn(t), &http.Cookie{Name: "app", Value: "1"})
+		e.p.rp.now = func() time.Time { return time.Now().Add(10 * time.Minute) }
+		rec := e.do(http.MethodGet, "/admin", cookies, http.Header{"X-Sub": {"admin"}})
+		assert.Equal(t, http.StatusTeapot, rec.Code)
+		assert.True(t, hasLine(rec.Header().Values("Set-Cookie"), "__Host-Http-Proxy.0=1."))
+		assert.False(t, hasLine(rec.Header().Values("Set-Cookie"), "__Host-Http-Proxy.0=forged"))
+		assert.Equal(t, "app=1", seen.Get("Cookie"))
+		assert.Empty(t, seen.Values("X-Sub"))
+		assert.False(t, identified)
+		assert.Equal(t, http.StatusOK, e.do(http.MethodGet, "/public", cookies, nil).Code)
+
+		seen = nil
+		assert.Equal(t, http.StatusForbidden, e.do(http.MethodPost, "/admin", cookies, http.Header{"Sec-Fetch-Site": {"cross-site"}}).Code)
+		assert.Nil(t, seen)
+	})
+	t.Run("login rule", func(t *testing.T) {
+		e := newProxyEnv(t, oidctest.Options{Claims: map[string]any{"email": "alice@other.com", "email_verified": true}},
+			WithAccessRule(EmailDomain("example.com")), forbidden)
+		rec := e.login(t, "/app/")
+		assert.Equal(t, http.StatusTeapot, rec.Code)
+		assert.False(t, hasLine(rec.Header().Values("Set-Cookie"), "__Host-Http-Proxy.0="))
+		assert.True(t, hasLine(rec.Header().Values("Set-Cookie"), "__Host-Http-Proxy-Login-"))
+		assert.Empty(t, e.idp.Revoked())
+
+		rec = e.do(http.MethodGet, "/oauth2/logout", nil, http.Header{"Sec-Fetch-Site": {"same-origin"}})
+		assert.Equal(t, http.StatusSeeOther, rec.Code)
+		q := url.Values{"client_id": {"app"}, "post_logout_redirect_uri": {appOrigin + "/"}}
+		assert.Equal(t, e.idp.URL+"/end_session?"+q.Encode(), rec.Header().Get("Location"))
+	})
+	t.Run("provider error", func(t *testing.T) {
+		e := newProxyEnv(t, oidctest.Options{}, forbidden)
+		rec := e.do(http.MethodGet, "/app/", nil, navigate)
+		require.Equal(t, http.StatusFound, rec.Code)
+		authorize, err := url.Parse(rec.Header().Get("Location"))
+		require.NoError(t, err)
+		q := url.Values{"state": {authorize.Query().Get("state")}, "error": {"access_denied"}, "iss": {e.p.rp.provider.issuer}}
+		rec = e.do(http.MethodGet, "/oauth2/callback?"+q.Encode(), requestCookies(t, rec.Header()), nil)
+		assert.Equal(t, http.StatusTeapot, rec.Code)
+		assert.False(t, hasLine(rec.Header().Values("Set-Cookie"), "__Host-Http-Proxy.0="))
+		assert.True(t, hasLine(rec.Header().Values("Set-Cookie"), "__Host-Http-Proxy-Login-"))
+	})
+	t.Run("cross-site", func(t *testing.T) {
+		e := newProxyEnv(t, oidctest.Options{}, forbidden)
+		cookies := e.loggedIn(t)
+		crossSite := http.Header{"Sec-Fetch-Site": {"cross-site"}}
+		assert.Equal(t, http.StatusForbidden, e.do(http.MethodPost, "/app/", cookies, crossSite).Code)
+		assert.Equal(t, http.StatusForbidden, e.do(http.MethodGet, "/oauth2/logout", cookies, crossSite).Code)
+		prefetch := http.Header{"Sec-Purpose": {"prefetch"}, "Sec-Fetch-Site": {"same-origin"}}
+		assert.Equal(t, http.StatusForbidden, e.do(http.MethodGet, "/oauth2/logout", cookies, prefetch).Code)
+	})
+}
+
 func TestProxyUnauthorized(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -228,11 +294,31 @@ func TestProxyInvalidSessionCleared(t *testing.T) {
 }
 
 func TestProxyUnauthorizedHandler(t *testing.T) {
-	e := newProxyEnv(t, oidctest.Options{}, WithUnauthorizedHandler(func(c *fox.Context) {
+	var seen http.Header
+	e := newProxyEnv(t, oidctest.Options{}, WithIdentityHeader("X-Sub", "sub"), WithUnauthorizedHandler(func(c *fox.Context) {
+		seen = c.Request().Header.Clone()
 		c.Writer().WriteHeader(http.StatusTeapot)
 	}))
-	assert.Equal(t, http.StatusTeapot, e.do(http.MethodGet, "/app/", nil, nil).Code)
+	cookies := []*http.Cookie{{Name: "__Host-Http-Proxy.0", Value: "1.x"}, {Name: "app", Value: "1"}}
+	assert.Equal(t, http.StatusTeapot, e.do(http.MethodGet, "/app/", cookies, http.Header{"X-Sub": {"admin"}}).Code)
+	assert.Equal(t, "app=1", seen.Get("Cookie"))
+	assert.Empty(t, seen.Values("X-Sub"))
 	assert.Equal(t, http.StatusFound, e.do(http.MethodGet, "/app/", nil, navigate).Code)
+}
+
+func TestProxyUndecodableClaims(t *testing.T) {
+	e := newProxyEnv(t, oidctest.Options{})
+	e.mount(t, "/admin", Require(Group("admin")))
+	e.mount(t, "/public", AllowAnonymous(), Require(Group("admin")))
+	s, st, err := e.p.rp.readSession(t.Context(), e.loggedIn(t))
+	require.NoError(t, err)
+	s.IDToken = "x"
+	h := http.Header{}
+	require.NoError(t, e.p.rp.writeSession(t.Context(), h, s, st))
+	cookies := requestCookies(t, h)
+	assert.Equal(t, http.StatusInternalServerError, e.do(http.MethodGet, "/admin", cookies, nil).Code)
+	assert.Equal(t, http.StatusInternalServerError, e.do(http.MethodGet, "/public", cookies, nil).Code)
+	assert.Equal(t, http.StatusOK, e.do(http.MethodGet, "/app/", cookies, nil).Code)
 }
 
 func TestProxyCrossOrigin(t *testing.T) {
@@ -426,6 +512,7 @@ func TestNewProxyOptions(t *testing.T) {
 		{name: "invalid header name", opt: WithIdentityHeader("X Email", "email")},
 		{name: "empty claim", opt: WithIdentityHeader("X-Email", "")},
 		{name: "nil rule", opt: WithAccessRule(nil)},
+		{name: "nil forbidden handler", opt: WithForbiddenHandler(nil)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

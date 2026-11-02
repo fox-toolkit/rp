@@ -74,6 +74,7 @@ type config struct {
 	logHandler      slog.Handler
 	store           store.Store
 	unauthorized    fox.HandlerFunc
+	forbidden       fox.HandlerFunc
 	csrfHeader      string
 	csrfValue       string
 	cookieDomain    string
@@ -94,6 +95,7 @@ func defaultConfig() *config {
 	return &config{
 		logHandler:      slog.DiscardHandler,
 		unauthorized:    DefaultUnauthorized,
+		forbidden:       DefaultForbidden,
 		idleTimeout:     DefaultIdleTimeout,
 		absoluteTimeout: DefaultAbsoluteTimeout,
 	}
@@ -334,6 +336,23 @@ func WithUnauthorizedHandler(handler fox.HandlerFunc) Option {
 // DefaultUnauthorized responds with 401 Unauthorized.
 func DefaultUnauthorized(c *fox.Context) {
 	http.Error(c.Writer(), http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+}
+
+// WithForbiddenHandler sets the handler called when a [Proxy] denies access to the user, by a rule of [WithAccessRule]
+// or [Require], or by an error of the provider at the callback. The default is [DefaultForbidden].
+func WithForbiddenHandler(handler fox.HandlerFunc) ProxyOption {
+	return proxyOptionFunc(func(c *config) error {
+		if handler == nil {
+			return fmt.Errorf("%w: nil forbidden handler", ErrInvalidConfig)
+		}
+		c.forbidden = handler
+		return nil
+	})
+}
+
+// DefaultForbidden responds with 403 Forbidden.
+func DefaultForbidden(c *fox.Context) {
+	http.Error(c.Writer(), http.StatusText(http.StatusForbidden), http.StatusForbidden)
 }
 
 type identityHeader struct {
