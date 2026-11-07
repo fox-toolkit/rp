@@ -97,6 +97,30 @@ func TestBackchannel(t *testing.T) {
 	}
 }
 
+func TestBackchannelOtherHost(t *testing.T) {
+	e, ms := newBackchannelEnv(t)
+	cookies := e.loggedIn(t)
+	s, _, err := e.fe.rp.readSession(t.Context(), cookies)
+	require.NoError(t, err)
+	admin, err := NewFrontend(Client{
+		Provider:     e.fe.rp.provider,
+		ClientID:     "app",
+		ClientSecret: oidctest.ClientSecret,
+		RedirectURL:  "https://admin.example.com/bff/callback",
+		Scopes:       []string{"openid"},
+	}, newGCMAEAD(t), WithStore(ms))
+	require.NoError(t, err)
+	f := fox.MustRouter()
+	f.MustAdd(fox.MethodPost, "/bff/backchannel", admin.BackchannelHandler())
+	other := &testEnv{idp: e.idp, fe: admin, router: f}
+
+	rec := other.backchannel(e.idp.LogoutToken("app", "alice", "s1"))
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{s.RefreshToken}, e.idp.Revoked())
+	_, _, err = e.fe.rp.readSession(t.Context(), cookies)
+	assert.ErrorIs(t, err, errNoSession)
+}
+
 func TestBackchannelInvalidToken(t *testing.T) {
 	e, ms := newBackchannelEnv(t)
 	e.loggedIn(t)

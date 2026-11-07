@@ -29,6 +29,7 @@ func NewFrontend(client Client, aead AEAD, opts ...FrontendOption) (*Frontend, e
 	if err != nil {
 		return nil, err
 	}
+	rp.replaceBySID = true
 	redirect, _ := url.Parse(client.RedirectURL)
 	for _, origin := range cfg.trustedOrigins {
 		if u, _ := url.Parse(origin); !sameSite(u, redirect) {
