@@ -343,14 +343,14 @@ func (rp *relyingParty) callbackHandler(allow func(*session) (bool, error), forb
 			}
 		}
 
-		// Replace any previous session of the client. The session cookie is usually not sent on the cross-site redirect
-		// from the provider, so the previous sessions of the same provider session are also found by their sid.
+		// Replace any previous session of the client. The session cookie of a frontend is not sent on the cross-site
+		// redirect from the provider, so its previous sessions of the same provider session are also found by their sid.
 		// Do not revoke their refresh tokens. Some providers, such as Keycloak, would also revoke the tokens just received.
 		_, prev, err := rp.readSession(r.Context(), cookies)
 		if err == nil && prev.id != "" {
 			_ = rp.cfg.store.Delete(r.Context(), prev.id)
 		}
-		if rp.cfg.store != nil && s.SID != "" {
+		if rp.replaceBySID && rp.cfg.store != nil && s.SID != "" {
 			if _, err := rp.cfg.store.DeleteBy(r.Context(), rp.partition, s.Subject, s.SID); err != nil {
 				rp.logFailed(r, "session store", err)
 				internalError(w)

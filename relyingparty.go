@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -33,8 +35,9 @@ type relyingParty struct {
 	parEndpoint           string
 	requestObjectAlg      string
 	// partition identifies the relying party, by its issuer and client ID.
-	partition string
-	cookie    cookieSpec
+	partition    string
+	cookie       cookieSpec
+	replaceBySID bool
 }
 
 func newRelyingParty(client Client, aead AEAD, cfg *config, cookie cookieSpec) (*relyingParty, error) {
@@ -104,6 +107,11 @@ func newRelyingParty(client Client, aead AEAD, cfg *config, cookie cookieSpec) (
 
 	sum := sha256.Sum256([]byte(p.issuer + "\x00" + client.ClientID))
 	partition := base64.RawURLEncoding.EncodeToString(sum[:])
+	cookie.scope = cookie.domain
+	if cookie.scope == "" {
+		redirect, _ := url.Parse(client.RedirectURL)
+		cookie.scope = strings.ToLower(redirect.Hostname())
+	}
 	rp := &relyingParty{
 		cfg:            cfg,
 		aead:           scopedAEAD{AEAD: aead, scope: partition},

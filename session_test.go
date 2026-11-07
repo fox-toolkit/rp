@@ -183,7 +183,7 @@ func TestSessionVersion(t *testing.T) {
 	data, err := json.Marshal(s)
 	require.NoError(t, err)
 	h := make(http.Header)
-	require.NoError(t, sessionCookie.write(h, fe.rp.aead, data, 0, 0))
+	require.NoError(t, fe.rp.cookie.write(h, fe.rp.aead, data, 0, 0))
 	_, _, err = fe.rp.readSession(t.Context(), requestCookies(t, h))
 	assert.ErrorIs(t, err, errNoSession)
 }
@@ -223,19 +223,24 @@ func TestSessionRefreshSkew(t *testing.T) {
 func TestSessionBoundToFrontend(t *testing.T) {
 	e := newTestEnv(t, oidctest.Options{})
 	cookies := e.loggedIn(t)
-	admin, err := NewFrontend(Client{
-		Provider:     e.fe.rp.provider,
-		ClientID:     "admin",
-		ClientSecret: oidctest.ClientSecret,
-		RedirectURL:  appOrigin + "/bff/callback",
-		Scopes:       []string{"openid"},
-	}, newGCMAEAD(t))
+	_, _, err := e.fe.rp.readSession(t.Context(), cookies)
 	require.NoError(t, err)
 
-	_, _, err = e.fe.rp.readSession(t.Context(), cookies)
-	require.NoError(t, err)
-	_, _, err = admin.rp.readSession(t.Context(), cookies)
-	assert.ErrorIs(t, err, errNoSession)
+	for _, c := range []struct{ clientID, redirectURL string }{
+		{clientID: "admin", redirectURL: appOrigin + "/bff/callback"},
+		{clientID: "app", redirectURL: "https://admin.example.com/bff/callback"},
+	} {
+		other, err := NewFrontend(Client{
+			Provider:     e.fe.rp.provider,
+			ClientID:     c.clientID,
+			ClientSecret: oidctest.ClientSecret,
+			RedirectURL:  c.redirectURL,
+			Scopes:       []string{"openid"},
+		}, newGCMAEAD(t))
+		require.NoError(t, err)
+		_, _, err = other.rp.readSession(t.Context(), cookies)
+		assert.ErrorIs(t, err, errNoSession)
+	}
 }
 
 // slowStore stores the sessions late, so a concurrent request reads the session before it is stored.

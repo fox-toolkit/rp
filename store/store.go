@@ -20,7 +20,7 @@ var (
 type Record struct {
 	// Expires is the time after which the session is no longer valid.
 	Expires time.Time
-	// Partition identifies the frontend of the session.
+	// Partition identifies the client of the session, by its issuer and client ID.
 	Partition string
 	// Subject is the sub claim of the user.
 	Subject string

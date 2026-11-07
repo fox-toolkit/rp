@@ -5,6 +5,8 @@
 package rp
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,7 +45,9 @@ func NewProxy(client Client, aead AEAD, opts ...ProxyOption) (*Proxy, error) {
 	}
 	cookie := proxySessionCookie
 	if cfg.cookieDomain != "" {
-		cookie = cookieSpec{name: sharedCookie, purpose: "session", domain: cfg.cookieDomain, sameSite: http.SameSiteLaxMode}
+		sum := sha256.Sum256([]byte(cfg.cookieDomain))
+		name := sharedCookie + "-" + hex.EncodeToString(sum[:4])
+		cookie = cookieSpec{name: name, purpose: "session", domain: cfg.cookieDomain, sameSite: http.SameSiteLaxMode}
 	}
 	rp, err := newRelyingParty(client, aead, cfg, cookie)
 	if err != nil {

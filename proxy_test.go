@@ -17,6 +17,7 @@ import (
 
 	"github.com/fox-toolkit/fox"
 	"github.com/fox-toolkit/rp/internal/oidctest"
+	"github.com/fox-toolkit/rp/store"
 	"github.com/fox-toolkit/rp/store/memory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -101,7 +102,7 @@ func (e *proxyEnv) upstream() http.Header {
 	return e.last
 }
 
-func (e *proxyEnv) login(t testing.TB, target string) *httptest.ResponseRecorder {
+func (e *proxyEnv) login(t testing.TB, target string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := e.do(http.MethodGet, target, nil, navigate)
 	require.Equal(t, http.StatusFound, rec.Code)
@@ -113,7 +114,7 @@ func (e *proxyEnv) login(t testing.TB, target string) *httptest.ResponseRecorder
 	require.Equal(t, http.StatusFound, resp.StatusCode)
 	callback, err := url.Parse(resp.Header.Get("Location"))
 	require.NoError(t, err)
-	return e.do(http.MethodGet, callback.RequestURI(), requestCookies(t, rec.Header()), nil)
+	return e.do(http.MethodGet, callback.RequestURI(), append(cookies, requestCookies(t, rec.Header())...), nil)
 }
 
 func (e *proxyEnv) loggedIn(t testing.TB) []*http.Cookie {
@@ -532,17 +533,19 @@ func TestNewProxyOptions(t *testing.T) {
 
 func TestProxySharedSession(t *testing.T) {
 	e := newProxyEnv(t, oidctest.Options{}, WithCookieDomain("Example.com"))
+	name := e.p.rp.cookie.name
+	assert.True(t, strings.HasPrefix(name, "__Http-Proxy-"))
 	rec := e.do(http.MethodGet, "https://app1.example.com/app/orders?id=1", nil, navigate)
 	require.Equal(t, http.StatusFound, rec.Code)
 	lines := rec.Header().Values("Set-Cookie")
 	require.Len(t, lines, 1)
-	assert.True(t, strings.HasPrefix(lines[0], "__Http-Proxy-Login-"))
+	assert.True(t, strings.HasPrefix(lines[0], name+"-Login-"))
 	assert.Contains(t, lines[0], "Domain=example.com; Max-Age=900; HttpOnly; Secure; SameSite=Lax")
 
 	rec = e.login(t, "https://app1.example.com/app/orders?id=1")
 	require.Equal(t, http.StatusFound, rec.Code)
 	assert.Equal(t, "https://app1.example.com/app/orders?id=1", rec.Header().Get("Location"))
-	assert.True(t, hasLine(rec.Header().Values("Set-Cookie"), "__Http-Proxy.0="))
+	assert.True(t, hasLine(rec.Header().Values("Set-Cookie"), name+".0="))
 	assert.Contains(t, strings.Join(rec.Header().Values("Set-Cookie"), "\n"), "Domain=example.com; HttpOnly; Secure; SameSite=Lax")
 	cookies := requestCookies(t, rec.Header())
 
@@ -557,7 +560,75 @@ func TestProxySharedSession(t *testing.T) {
 
 	rec = e.do(http.MethodGet, "/oauth2/logout", cookies, nil)
 	assert.Equal(t, http.StatusSeeOther, rec.Code)
-	assert.True(t, hasLine(rec.Header().Values("Set-Cookie"), "__Http-Proxy.0=; Path=/; Domain=example.com; Max-Age=0"))
+	assert.True(t, hasLine(rec.Header().Values("Set-Cookie"), name+".0=; Path=/; Domain=example.com; Max-Age=0"))
+}
+
+func TestProxySessionBoundToDomain(t *testing.T) {
+	e := newProxyEnv(t, oidctest.Options{})
+	client := proxyClient(t, e.idp)
+	client.RedirectURL = "https://admin.example.com/oauth2/callback"
+	other, err := NewProxy(client, newGCMAEAD(t))
+	require.NoError(t, err)
+	_, _, err = other.rp.readSession(t.Context(), e.loggedIn(t))
+	assert.ErrorIs(t, err, errNoSession)
+
+	e = newProxyEnv(t, oidctest.Options{}, WithCookieDomain("example.com"))
+	other, err = NewProxy(proxyClient(t, e.idp), newGCMAEAD(t), WithCookieDomain("app.example.com"))
+	require.NoError(t, err)
+	_, _, err = other.rp.readSession(t.Context(), e.loggedIn(t))
+	assert.ErrorIs(t, err, errNoSession)
+}
+
+func TestProxyCallbackReplacesSession(t *testing.T) {
+	ms := &mapStore{records: make(map[string]store.Record)}
+	e := newProxyEnv(t, oidctest.Options{SID: "s1"}, WithStore(ms))
+	first := e.loggedIn(t)
+	require.Len(t, ms.records, 1)
+
+	second := e.login(t, "/app/", first...)
+	require.Equal(t, http.StatusFound, second.Code)
+	assert.Len(t, ms.records, 1)
+
+	_, _, err := e.p.rp.readSession(t.Context(), first)
+	assert.ErrorIs(t, err, errNoSession)
+	_, _, err = e.p.rp.readSession(t.Context(), requestCookies(t, second.Header()))
+	assert.NoError(t, err)
+}
+
+func TestProxyLoginKeepsOtherHostSession(t *testing.T) {
+	ms := memory.NewStore()
+	e := newProxyEnv(t, oidctest.Options{SID: "s1"}, WithStore(ms))
+	cookies := e.loggedIn(t)
+
+	client := proxyClient(t, e.idp)
+	client.RedirectURL = "https://admin.example.com/oauth2/callback"
+	p, err := NewProxy(client, newGCMAEAD(t), WithStore(ms))
+	require.NoError(t, err)
+	other := &proxyEnv{idp: e.idp, p: p, router: fox.MustRouter()}
+	other.router.MustAdd(fox.MethodGet, "/oauth2/callback", p.CallbackHandler())
+	other.mount(t, "/app/*{any}")
+	require.Equal(t, http.StatusFound, other.login(t, "https://admin.example.com/app/").Code)
+
+	_, _, err = e.p.rp.readSession(t.Context(), cookies)
+	assert.NoError(t, err)
+}
+
+func TestProxyNestedCookieDomains(t *testing.T) {
+	e := newProxyEnv(t, oidctest.Options{}, WithCookieDomain("example.com"))
+	parent := requestCookies(t, e.login(t, "https://x.admin.example.com/app/").Header())
+
+	client := proxyClient(t, e.idp)
+	client.RedirectURL = "https://admin.example.com/oauth2/callback"
+	p, err := NewProxy(client, newGCMAEAD(t), WithCookieDomain("admin.example.com"))
+	require.NoError(t, err)
+	other := &proxyEnv{idp: e.idp, p: p, router: fox.MustRouter()}
+	other.router.MustAdd(fox.MethodGet, "/oauth2/callback", p.CallbackHandler())
+	other.mount(t, "/app/*{any}")
+	child := requestCookies(t, other.login(t, "https://x.admin.example.com/app/").Header())
+
+	rec := other.do(http.MethodGet, "https://x.admin.example.com/app/", append(parent, child...), navigate)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.True(t, other.identified)
 }
 
 func TestWithCookieDomain(t *testing.T) {

@@ -17,8 +17,8 @@ const (
 	cookiePrefix   = "__Host-Http-"
 	frontendCookie = cookiePrefix + "BFF"
 	proxyCookie    = cookiePrefix + "Proxy"
-	// sharedCookie is the session cookie of a [Proxy] with a cookie domain. The __Host- prefix forbids the Domain
-	// attribute.
+	// sharedCookie starts the name of the session cookie of a [Proxy] with a cookie domain. The __Host- prefix forbids
+	// the Domain attribute.
 	sharedCookie = "__Http-Proxy"
 	// maxChunkSize is the maximum length of a cookie value. It leaves room for the name and attributes within the
 	// 4096 bytes that browsers accept for a cookie.
@@ -37,6 +37,7 @@ type cookieSpec struct {
 	name     string
 	purpose  string
 	domain   string
+	scope    string
 	sameSite http.SameSite
 }
 
@@ -50,11 +51,11 @@ var proxySessionCookie = cookieSpec{name: proxyCookie, purpose: "session", sameS
 // loginCookie contains the state of one login flow, for the session cookie. It must be sent on the cross-site
 // navigation from the provider to the callback, hence the lax mode.
 func loginCookie(session cookieSpec, id string) cookieSpec {
-	return cookieSpec{name: session.name + "-Login-" + id, purpose: "login", domain: session.domain, sameSite: http.SameSiteLaxMode}
+	return cookieSpec{name: session.name + "-Login-" + id, purpose: "login", domain: session.domain, scope: session.scope, sameSite: http.SameSiteLaxMode}
 }
 
 func (s cookieSpec) associatedData() []byte {
-	return []byte(s.purpose + "\x00" + s.name)
+	return []byte(s.purpose + "\x00" + s.name + "\x00" + s.scope)
 }
 
 // write seals the plaintext and adds the chunks to h. A maxAge of 0 makes a browser session cookie. prev is the
