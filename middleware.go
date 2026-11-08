@@ -336,7 +336,10 @@ func isOwnCookie(name string) bool {
 	return strings.HasPrefix(name, sharedCookie+"-")
 }
 
-// RemoveCookies removes the cookies of the frontends and proxies from the Cookie and Set-Cookie headers of h.
+// RemoveCookies removes the session and login cookies of any [Frontend] or [Proxy] from the Cookie and Set-Cookie
+// fields of h. It may be used to prevent other servers, such as the upstream of a reverse proxy, from reading the
+// session of the user or from setting a cookie that a [Frontend] or a [Proxy] would read. It is not needed on the
+// routes that use [Frontend.Authenticate] or [Proxy.Authenticate], which already remove these cookies.
 func RemoveCookies(h http.Header) {
 	removeOwnCookies(h)
 	removeOwnSetCookies(h)
