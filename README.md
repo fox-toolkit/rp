@@ -1,10 +1,12 @@
+# RP
+
+<img align="right" width="159px" src="https://raw.githubusercontent.com/fox-toolkit/rp/refs/heads/static/rp_logo.png">
+
 [![Go Reference](https://pkg.go.dev/badge/github.com/fox-toolkit/rp.svg)](https://pkg.go.dev/github.com/fox-toolkit/rp)
 [![tests](https://github.com/fox-toolkit/rp/actions/workflows/tests.yaml/badge.svg)](https://github.com/fox-toolkit/rp/actions?query=workflow%3Atests)
 [![codecov](https://codecov.io/gh/fox-toolkit/rp/graph/badge.svg?token=7M87P7Q31N)](https://codecov.io/gh/fox-toolkit/rp)
 ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/fox-toolkit/rp)
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/fox-toolkit/rp)
-
-# RP
 
 RP is an open-source OpenID Connect Relying Party for the [Fox](https://github.com/fox-toolkit/fox) router. It provides
 the handlers and middleware to build authentication gateways such as Backend for Frontend (BFF), as described in
@@ -171,3 +173,10 @@ fe, err := rp.NewFrontend(rp.Client{
 	rp.WithSigningAlgorithms("PS256", "ES256", "EdDSA"),
 )
 ````
+
+## License
+
+RP is licensed under the **MIT License**. See [`LICENSE`](./LICENSE) for details.
+
+The [**RP logo**](https://github.com/fox-toolkit/rp/blob/static/rp_logo.png) is licensed separately under [**CC BY-NC-ND 4.0**](https://creativecommons.org/licenses/by-nc-nd/4.0/?ref=chooser-v1).
+See [`LICENSE-rp-logo.txt`](https://github.com/fox-toolkit/rp/blob/static/LICENSE-rp-logo.txt) for details.
