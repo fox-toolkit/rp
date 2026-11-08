@@ -328,7 +328,21 @@ func (rp *relyingParty) refreshToken(ctx context.Context, s *session, st session
 // can share a host.
 func isOwnCookie(name string) bool {
 	name = strings.TrimSpace(name)
-	return strings.HasPrefix(name, frontendCookie) || strings.HasPrefix(name, proxyCookie) || strings.HasPrefix(name, sharedCookie)
+	for _, base := range []string{frontendCookie, proxyCookie} {
+		if rest, ok := strings.CutPrefix(name, base); ok && (strings.HasPrefix(rest, ".") || strings.HasPrefix(rest, "-Login-")) {
+			return true
+		}
+	}
+	return strings.HasPrefix(name, sharedCookie+"-")
+}
+
+// RemoveCookies removes the session and login cookies of any [Frontend] or [Proxy] from the Cookie and Set-Cookie
+// fields of h. It may be used to prevent other servers, such as the upstream of a reverse proxy, from reading the
+// session of the user or from setting a cookie that a [Frontend] or a [Proxy] would read. It is not needed on the
+// routes that use [Frontend.Authenticate] or [Proxy.Authenticate], which already remove these cookies.
+func RemoveCookies(h http.Header) {
+	removeOwnCookies(h)
+	removeOwnSetCookies(h)
 }
 
 func removeOwnCookies(h http.Header) {
@@ -340,9 +354,10 @@ func removeOwnCookies(h http.Header) {
 	for _, line := range lines {
 		var pairs []string
 		for pair := range strings.SplitSeq(line, ";") {
+			pair = strings.Trim(pair, " \t")
 			name, _, _ := strings.Cut(pair, "=")
-			if !isOwnCookie(name) {
-				pairs = append(pairs, strings.TrimSpace(pair))
+			if pair != "" && !isOwnCookie(name) {
+				pairs = append(pairs, pair)
 			}
 		}
 		if len(pairs) > 0 {
@@ -392,7 +407,9 @@ func removeSetCookies(h http.Header, remove func(name string) bool) {
 	}
 	kept := make([]string, 0, len(lines))
 	for _, line := range lines {
-		name, _, _ := strings.Cut(line, "=")
+		// A browser may store =name=value as a cookie with an empty name, and then send it as name=value in the Cookie
+		// header.
+		name, _, _ := strings.Cut(strings.TrimLeft(line, " \t="), "=")
 		if !remove(name) {
 			kept = append(kept, line)
 		}
