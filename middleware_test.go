@@ -308,14 +308,62 @@ func TestMiddlewareResponseCookies(t *testing.T) {
 	assert.NotContains(t, lines[1], "evil")
 }
 
-func TestRemoveOwnCookies(t *testing.T) {
-	h := http.Header{"Cookie": {"a=1; __Host-Http-BFF.0=x; b=2", "__Host-Http-BFF-Login-s.0=y", " c=3 "}}
-	removeOwnCookies(h)
-	assert.Equal(t, []string{"a=1; b=2", "c=3"}, h["Cookie"])
-
-	h = http.Header{"Cookie": {"__Host-Http-BFF.0=x"}}
-	removeOwnCookies(h)
-	assert.NotContains(t, h, "Cookie")
+func TestRemoveCookies(t *testing.T) {
+	cases := []struct {
+		name string
+		in   http.Header
+		want http.Header
+	}{
+		{
+			name: "session and login chunks",
+			in:   http.Header{"Cookie": {"a=1; __Host-Http-BFF.0=x; __Host-Http-BFF-Login-s.0=y", "__Host-Http-Proxy.1=y; b=2"}},
+			want: http.Header{"Cookie": {"a=1", "b=2"}},
+		},
+		{
+			name: "shared cookie",
+			in:   http.Header{"Cookie": {"__Http-Proxy-0123abcd.0=x; __Http-Proxy-0123abcd-Login-s.0=y; a=1"}},
+			want: http.Header{"Cookie": {"a=1"}},
+		},
+		{
+			name: "unrelated names",
+			in:   http.Header{"Cookie": {"__Host-Http-BFFTheme=1; __Http-ProxyRegion=1"}},
+			want: http.Header{"Cookie": {"__Host-Http-BFFTheme=1; __Http-ProxyRegion=1"}},
+		},
+		{
+			name: "empty pairs",
+			in:   http.Header{"Cookie": {"a=1; ; __Host-Http-BFF.0=x;"}},
+			want: http.Header{"Cookie": {"a=1"}},
+		},
+		{
+			name: "unicode space kept",
+			in:   http.Header{"Cookie": {"\tc=3 ;  __Host-Http-session=x;  __Host-Http-BFF.0=x"}},
+			want: http.Header{"Cookie": {"c=3;  __Host-Http-session=x"}},
+		},
+		{
+			name: "only own cookies",
+			in:   http.Header{"Cookie": {"__Host-Http-BFF.0=x"}, "Set-Cookie": {"__Host-Http-BFF.0=x"}},
+			want: http.Header{},
+		},
+		{
+			name: "set cookie",
+			in: http.Header{"Set-Cookie": {
+				"__Host-Http-Proxy.0=x; Path=/", "__Host-Http-BFF-Login-a.0=x; Path=/", "__Http-Proxy-0123abcd-Login-a.0=x; Path=/",
+				"app=1", "__Host-Http-ProxyRegion=1; Path=/",
+			}},
+			want: http.Header{"Set-Cookie": {"app=1", "__Host-Http-ProxyRegion=1; Path=/"}},
+		},
+		{
+			name: "nameless set cookie",
+			in:   http.Header{"Set-Cookie": {"=__Http-Proxy-0123abcd.0=x; Path=/", " = __Host-Http-BFF.0=x; Path=/"}},
+			want: http.Header{},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			RemoveCookies(tc.in)
+			assert.Equal(t, tc.want, tc.in)
+		})
+	}
 }
 
 type deletingStore struct {

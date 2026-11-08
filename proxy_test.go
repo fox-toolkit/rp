@@ -495,14 +495,10 @@ func hasLine(lines []string, prefix string) bool {
 
 func TestOwnCookiesSharedHost(t *testing.T) {
 	e := newProxyEnv(t, oidctest.Options{})
-	cookies := append(e.loggedIn(t), &http.Cookie{Name: "__Host-Http-BFF.0", Value: "x"}, &http.Cookie{Name: "__Http-Proxy.0", Value: "x"},
+	cookies := append(e.loggedIn(t), &http.Cookie{Name: "__Host-Http-BFF.0", Value: "x"}, &http.Cookie{Name: "__Http-Proxy-0123abcd.0", Value: "x"},
 		&http.Cookie{Name: "app", Value: "1"})
 	require.Equal(t, http.StatusOK, e.do(http.MethodGet, "/app/", cookies, nil).Code)
 	assert.Equal(t, "app=1", e.upstream().Get("Cookie"))
-
-	h := http.Header{"Set-Cookie": {"__Host-Http-Proxy.0=x; Path=/", "__Host-Http-BFF-Login-a.0=x; Path=/", "__Http-Proxy-Login-a.0=x; Path=/", "app=1"}}
-	removeOwnSetCookies(h)
-	assert.Equal(t, []string{"app=1"}, h.Values("Set-Cookie"))
 }
 
 func TestNewProxyOptions(t *testing.T) {
