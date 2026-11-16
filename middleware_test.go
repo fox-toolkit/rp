@@ -140,6 +140,9 @@ func TestMiddlewareCSRF(t *testing.T) {
 		{name: "missing header", method: http.MethodGet, header: http.Header{"Sec-Fetch-Site": {"same-origin"}}, code: http.StatusForbidden},
 		{name: "wrong header", method: http.MethodGet, header: http.Header{"X-Csrf": {"0"}}, code: http.StatusForbidden},
 		{name: "same-origin post", method: http.MethodPost, header: http.Header{"Sec-Fetch-Site": {"same-origin"}, "X-Csrf": {"1"}}, code: http.StatusOK},
+		{name: "same-origin websocket", method: http.MethodGet, header: http.Header{"Upgrade": {"websocket"}, "Origin": {appOrigin}}, code: http.StatusOK},
+		{name: "sibling websocket", method: http.MethodGet, header: http.Header{"Upgrade": {"websocket"}, "Origin": {"https://evil.example.com"}}, code: http.StatusForbidden},
+		{name: "post upgrade", method: http.MethodPost, header: http.Header{"Upgrade": {"websocket"}, "Sec-Fetch-Site": {"same-origin"}}, code: http.StatusForbidden},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

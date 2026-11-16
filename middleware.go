@@ -183,7 +183,9 @@ func (rp *relyingParty) checkCSRF(r *http.Request) error {
 	if err := rp.checkOrigin(r); err != nil {
 		return err
 	}
-	if rp.cfg.csrfHeader != "" && r.Header.Get(rp.cfg.csrfHeader) != rp.cfg.csrfValue {
+	// A browser cannot set a header on a WebSocket handshake.
+	handshake := r.Method == http.MethodGet && r.Header.Get("Upgrade") != ""
+	if rp.cfg.csrfHeader != "" && !handshake && r.Header.Get(rp.cfg.csrfHeader) != rp.cfg.csrfValue {
 		return errCSRFHeader
 	}
 	return nil
