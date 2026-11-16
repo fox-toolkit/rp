@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/fox-toolkit/rp/store"
 	"golang.org/x/oauth2"
 )
@@ -330,7 +329,6 @@ func (rp *relyingParty) redeem(ctx context.Context, s *session, resource string)
 		}
 	}
 	client := rp.providerClient(key)
-	ctx = oidc.ClientContext(ctx, client)
 
 	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {s.RefreshToken}}
 	if resource != "" {
@@ -361,18 +359,16 @@ func (rp *relyingParty) redeem(ctx context.Context, s *session, resource string)
 	}
 	res := refreshResult{token: token, idToken: rawIDToken, at: rp.now()}
 	if resource == "" && rp.cfg.userInfo {
-		info, err := rp.provider.oidc.UserInfo(ctx, oauth2.StaticTokenSource(token))
+		sub, info, err := rp.requestUserInfo(ctx, client, token)
 		switch {
 		case err != nil:
 			// The claims of the previous UserInfo response are kept.
 			rp.logger.WarnContext(ctx, "userinfo request failed", "error", err)
-		case info.Subject != s.Subject:
+		case sub != s.Subject:
 			// OpenID Connect Core 5.3.2 requires the sub of the UserInfo response to match the ID token.
 			return refreshResult{}, fmt.Errorf("%w: refreshed userinfo: sub changed", errSessionEnded)
 		default:
-			if err := info.Claims(&res.userInfo); err != nil {
-				rp.logger.WarnContext(ctx, "userinfo request failed", "error", err)
-			}
+			res.userInfo = info
 		}
 	}
 	return res, nil

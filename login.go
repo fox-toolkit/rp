@@ -384,7 +384,7 @@ func (rp *relyingParty) exchange(r *http.Request, code string, ls loginState) (*
 		}
 	}
 	client := rp.providerClient(key)
-	ctx := oidc.ClientContext(r.Context(), client)
+	ctx := r.Context()
 	token, err := rp.requestToken(ctx, client, url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
@@ -427,17 +427,15 @@ func (rp *relyingParty) exchange(r *http.Request, code string, ls loginState) (*
 	s.setToken(token, now)
 
 	if rp.cfg.userInfo {
-		info, err := rp.provider.oidc.UserInfo(ctx, oauth2.StaticTokenSource(token))
+		sub, info, err := rp.requestUserInfo(ctx, client, token)
 		if err != nil {
 			return nil, err
 		}
 		// OpenID Connect Core 5.3.2: the sub of the UserInfo response must match the ID token.
-		if info.Subject != idToken.Subject {
+		if sub != idToken.Subject {
 			return nil, fmt.Errorf("%w: userinfo subject mismatch", errInvalidLogin)
 		}
-		if err := info.Claims(&s.UserInfo); err != nil {
-			return nil, fmt.Errorf("%w: %w", errInvalidLogin, err)
-		}
+		s.UserInfo = info
 	}
 	return s, nil
 }

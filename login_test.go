@@ -5,7 +5,9 @@
 package rp
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -397,17 +399,49 @@ func TestCallbackInvalid(t *testing.T) {
 }
 
 func TestCallbackUserInfo(t *testing.T) {
-	e := newTestEnv(t, oidctest.Options{UserInfo: map[string]any{"email": "alice@example.com"}}, WithUserInfo(true))
-	rec := e.login(t, "", nil)
-	require.Equal(t, http.StatusFound, rec.Code)
-	s, _, err := e.fe.rp.readSession(t.Context(), requestCookies(t, rec.Header()))
-	require.NoError(t, err)
-	var info map[string]any
-	require.NoError(t, json.Unmarshal(s.UserInfo, &info))
-	assert.Equal(t, "alice@example.com", info["email"])
+	for _, signed := range []bool{false, true} {
+		t.Run("signed="+strconv.FormatBool(signed), func(t *testing.T) {
+			e := newTestEnv(t, oidctest.Options{UserInfo: map[string]any{"email": "alice@example.com"}, SignedUserInfo: signed}, WithUserInfo(true))
+			rec := e.login(t, "", nil)
+			require.Equal(t, http.StatusFound, rec.Code)
+			assert.Equal(t, 1, e.idp.KeySetRequests())
+			s, _, err := e.fe.rp.readSession(t.Context(), requestCookies(t, rec.Header()))
+			require.NoError(t, err)
+			var info map[string]any
+			require.NoError(t, json.Unmarshal(s.UserInfo, &info))
+			assert.Equal(t, "alice@example.com", info["email"])
 
-	e.idp.Update(func(o *oidctest.Options) { o.UserInfo = map[string]any{"sub": "mallory"} })
-	assert.Equal(t, http.StatusBadRequest, e.login(t, "", nil).Code)
+			e.idp.Update(func(o *oidctest.Options) { o.UserInfo = map[string]any{"sub": "mallory"} })
+			assert.Equal(t, http.StatusBadRequest, e.login(t, "", nil).Code)
+		})
+	}
+}
+
+func TestCallbackForgedUserInfo(t *testing.T) {
+	e := newTestEnvWithClient(t, oidctest.Options{SignedUserInfo: true}, func(c *Client) {
+		c.Provider.client = &http.Client{Transport: forgedUserInfo{c.Provider.client.Transport}}
+	}, WithUserInfo(true))
+	assert.Equal(t, http.StatusBadGateway, e.login(t, "", nil).Code)
+}
+
+type forgedUserInfo struct {
+	base http.RoundTripper
+}
+
+func (f forgedUserInfo) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := f.base.RoundTrip(r)
+	if err != nil || r.URL.Path != "/userinfo" {
+		return resp, err
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	parts := strings.Split(string(body), ".")
+	parts[1] = base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"alice","email":"ceo@example.com"}`))
+	resp.Body = io.NopCloser(strings.NewReader(strings.Join(parts, ".")))
+	return resp, nil
 }
 
 func FuzzLocalURL(f *testing.F) {
