@@ -211,7 +211,15 @@ func TestLogoutWithProviderEndpointOptions(t *testing.T) {
 
 type failingStore struct {
 	store.Store
-	fail bool
+	fail       bool
+	failDelete bool
+}
+
+func (s *failingStore) Delete(ctx context.Context, id string) error {
+	if s.failDelete {
+		return errors.New("store down")
+	}
+	return s.Store.Delete(ctx, id)
 }
 
 func (s *failingStore) Load(ctx context.Context, id string) (store.Record, error) {
@@ -234,6 +242,29 @@ func TestLogoutStoreError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	assert.Empty(t, rec.Header().Values("Set-Cookie"))
 	assert.Empty(t, e.idp.EndSessions())
+}
+
+func TestLogoutStoreDeleteError(t *testing.T) {
+	fs := &failingStore{Store: memory.NewStore()}
+	e := newTestEnv(t, oidctest.Options{}, WithStore(fs))
+	e.mountLogout(t)
+	cookies := e.loggedIn(t)
+	s, _, err := e.fe.rp.readSession(t.Context(), cookies)
+	require.NoError(t, err)
+
+	fs.failDelete = true
+	rec := e.do(http.MethodGet, "/bff/logout?csrf_token="+s.LogoutCSRFToken, cookies, nil)
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Empty(t, rec.Header().Values("Set-Cookie"))
+	assert.Empty(t, e.idp.Revoked())
+
+	fs.failDelete = false
+	rec = e.do(http.MethodGet, "/bff/logout?csrf_token="+s.LogoutCSRFToken, cookies, nil)
+	assert.Equal(t, http.StatusSeeOther, rec.Code)
+	assert.True(t, hasLine(rec.Header().Values("Set-Cookie"), "__Host-Http-BFF.0=;"))
+	assert.Equal(t, []string{s.RefreshToken}, e.idp.Revoked())
+	_, _, err = e.fe.rp.readSession(t.Context(), cookies)
+	assert.ErrorIs(t, err, errNoSession)
 }
 
 func TestLogoutForgetsTokens(t *testing.T) {

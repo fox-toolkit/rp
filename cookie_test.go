@@ -121,6 +121,21 @@ func TestCookieClear(t *testing.T) {
 	}, h.Values("Set-Cookie"))
 }
 
+func TestCookieClearPresent(t *testing.T) {
+	cookies := []*http.Cookie{
+		{Name: "__Host-Http-BFF-Login-abc.0", Value: "x"},
+		{Name: "__Host-Http-BFF-Login-abc.7", Value: "x"},
+		{Name: "__Host-Http-BFF-Login-abc.x", Value: "x"},
+		{Name: "__Host-Http-BFF-Login-other.0", Value: "x"},
+	}
+	h := make(http.Header)
+	loginCookie(sessionCookie, "abc").clearSent(h, cookies)
+	assert.Equal(t, []string{
+		"__Host-Http-BFF-Login-abc.0=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax",
+		"__Host-Http-BFF-Login-abc.7=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax",
+	}, h.Values("Set-Cookie"))
+}
+
 func TestCookieReadInvalid(t *testing.T) {
 	aead := newGCMAEAD(t)
 	h := make(http.Header)

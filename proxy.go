@@ -123,7 +123,7 @@ func (p *Proxy) serve(c *fox.Context, next fox.HandlerFunc) {
 				if !allowAnonymous(route) {
 					// Do not delete the session. The user may have access to other routes.
 					addSetCookies(w.Header(), pending)
-					if err := rp.cop.Check(r); err != nil {
+					if err := rp.checkOrigin(r); err != nil {
 						rp.logRejected(r, "cross-site request", err)
 						http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 						return
@@ -137,7 +137,7 @@ func (p *Proxy) serve(c *fox.Context, next fox.HandlerFunc) {
 		}
 	}
 	if s != nil {
-		if err := rp.cop.Check(r); err != nil {
+		if err := rp.checkOrigin(r); err != nil {
 			addSetCookies(w.Header(), pending)
 			rp.logRejected(r, "cross-site request", err)
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)

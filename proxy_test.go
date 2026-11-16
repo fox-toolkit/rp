@@ -186,6 +186,24 @@ func TestProxyRefreshedCookie(t *testing.T) {
 	}
 }
 
+func TestProxyCookieCacheControl(t *testing.T) {
+	e := newProxyEnv(t, oidctest.Options{})
+	e.router.MustAdd(fox.MethodGet, "/asset", func(c *fox.Context) {
+		c.Writer().Header().Set("Cache-Control", "public, max-age=3600")
+		c.Writer().WriteHeader(http.StatusOK)
+	}, fox.WithMiddleware(e.p.Authenticate()))
+	cookies := e.loggedIn(t)
+
+	rec := e.do(http.MethodGet, "/asset", cookies, nil)
+	assert.Empty(t, rec.Header().Values("Set-Cookie"))
+	assert.Equal(t, "public, max-age=3600", rec.Header().Get("Cache-Control"))
+
+	e.p.rp.now = func() time.Time { return time.Now().Add(16 * time.Minute) }
+	rec = e.do(http.MethodGet, "/asset", cookies, nil)
+	assert.True(t, hasLine(rec.Header().Values("Set-Cookie"), "__Host-Http-Proxy.0="))
+	assert.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
+}
+
 func TestProxyCallbackProviderError(t *testing.T) {
 	e := newProxyEnv(t, oidctest.Options{})
 	rec := e.do(http.MethodGet, "/app/", nil, navigate)
@@ -332,6 +350,14 @@ func TestProxyCrossOrigin(t *testing.T) {
 	assert.Equal(t, http.StatusOK, e.do(http.MethodGet, "/app/", cookies, crossSite).Code)
 	assert.Equal(t, http.StatusOK, e.do(http.MethodPost, "/public", nil, crossSite).Code)
 	assert.Equal(t, http.StatusForbidden, e.do(http.MethodPost, "/public", cookies, crossSite).Code)
+
+	upgrade := func(origin string) http.Header {
+		return http.Header{"Connection": {"Upgrade"}, "Upgrade": {"websocket"}, "Origin": {origin}}
+	}
+	assert.Equal(t, http.StatusForbidden, e.do(http.MethodGet, "/app/", cookies, upgrade("https://evil.example.com")).Code)
+	assert.Nil(t, e.upstream())
+	assert.Equal(t, http.StatusOK, e.do(http.MethodGet, "/app/", cookies, upgrade(appOrigin)).Code)
+	assert.Equal(t, http.StatusOK, e.do(http.MethodGet, "/public", nil, upgrade("https://evil.example.com")).Code)
 }
 
 func TestProxyIdentityHeaders(t *testing.T) {

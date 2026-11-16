@@ -118,7 +118,13 @@ func TestTransportKeepsRequest(t *testing.T) {
 func TestTransportRedirect(t *testing.T) {
 	var got string
 	record := func(_ http.ResponseWriter, r *http.Request) { got = r.Header.Get("Authorization") }
-	other := httptest.NewServer(http.HandlerFunc(record))
+	var api *httptest.Server
+	otherMux := http.NewServeMux()
+	otherMux.HandleFunc("/next", record)
+	otherMux.HandleFunc("/back", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, api.URL+"/next", http.StatusFound)
+	})
+	other := httptest.NewServer(otherMux)
 	defer other.Close()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/next", record)
@@ -126,23 +132,47 @@ func TestTransportRedirect(t *testing.T) {
 	mux.HandleFunc("/other", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, other.URL+"/next", http.StatusFound)
 	})
-	api := httptest.NewServer(mux)
+	mux.HandleFunc("/roundtrip", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/back", http.StatusFound)
+	})
+	api = httptest.NewServer(mux)
 	defer api.Close()
 
 	s := testSession()
 	s.TokenType = "Bearer"
 	ctx := context.WithValue(t.Context(), sessionKey{}, &requestState{session: s})
-	for path, want := range map[string]string{"/same": "Bearer access-token", "/other": ""} {
-		t.Run(path, func(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		base http.RoundTripper
+		want string
+	}{
+		{name: "same host", path: "/same", want: "Bearer access-token"},
+		{name: "other host", path: "/other"},
+		{name: "back to the host", path: "/roundtrip"},
+		{name: "unknown chain", path: "/same", base: requestlessTransport{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			got = "unset"
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, api.URL+path, nil)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, api.URL+tc.path, nil)
 			require.NoError(t, err)
-			resp, err := (&http.Client{Transport: Transport(nil)}).Do(req)
+			resp, err := (&http.Client{Transport: Transport(tc.base)}).Do(req)
 			require.NoError(t, err)
 			_ = resp.Body.Close()
-			assert.Equal(t, want, got)
+			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+type requestlessTransport struct{}
+
+func (requestlessTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultTransport.RoundTrip(r)
+	if resp != nil {
+		resp.Request = nil
+	}
+	return resp, err
 }
 
 func TestTransportUpgrade(t *testing.T) {

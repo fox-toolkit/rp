@@ -5,6 +5,7 @@
 package rp
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -117,3 +118,48 @@ func (w *discardWriter) Header() http.Header {
 }
 func (w *discardWriter) Write(b []byte) (int, error) { return len(b), nil }
 func (w *discardWriter) WriteHeader(int)             {}
+
+func TestSessionClaimsEmailSource(t *testing.T) {
+	idToken := map[string]any{"sub": "alice", "email": "alice@perso.example", "email_verified": true}
+	cases := []struct {
+		name     string
+		userInfo map[string]any
+		want     map[string]any
+	}{
+		{
+			name:     "email without verification",
+			userInfo: map[string]any{"sub": "alice", "email": "ceo@corp.example"},
+			want:     map[string]any{"sub": "alice", "email": "ceo@corp.example"},
+		},
+		{
+			name:     "verification without email",
+			userInfo: map[string]any{"sub": "alice", "email_verified": true},
+			want:     map[string]any{"sub": "alice", "email_verified": true},
+		},
+		{
+			name:     "both",
+			userInfo: map[string]any{"sub": "alice", "email": "ceo@corp.example", "email_verified": false},
+			want:     map[string]any{"sub": "alice", "email": "ceo@corp.example", "email_verified": false},
+		},
+		{
+			name:     "neither",
+			userInfo: map[string]any{"sub": "alice", "name": "Alice"},
+			want:     map[string]any{"sub": "alice", "name": "Alice", "email": "alice@perso.example", "email_verified": true},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload, err := json.Marshal(idToken)
+			require.NoError(t, err)
+			userInfo, err := json.Marshal(tc.userInfo)
+			require.NoError(t, err)
+			s := testSession()
+			s.IDToken = "e30." + base64.RawURLEncoding.EncodeToString(payload) + ".sig"
+			s.UserInfo = userInfo
+			claims, err := s.claims()
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, claims)
+			assert.False(t, EmailDomain("corp.example")(claims))
+		})
+	}
+}

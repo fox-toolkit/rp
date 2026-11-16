@@ -88,6 +88,18 @@ func (s cookieSpec) clear(h http.Header, prev int) {
 	}
 }
 
+// clearSent deletes the chunks of s that the client sent.
+func (s cookieSpec) clearSent(h http.Header, cookies []*http.Cookie) {
+	prefix := s.name + "."
+	for _, c := range cookies {
+		if suffix, ok := strings.CutPrefix(c.Name, prefix); ok {
+			if i, ok := chunkIndex(suffix); ok {
+				h.Add("Set-Cookie", s.cookie(i, "", -1))
+			}
+		}
+	}
+}
+
 // read reassembles and opens the chunks among cookies. It also returns the number of chunk slots found, so they can
 // be deleted when the cookie is invalid or shorter.
 func (s cookieSpec) read(cookies []*http.Cookie, aead AEAD) ([]byte, int, error) {

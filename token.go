@@ -116,14 +116,16 @@ func (t *transport) send(r *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(r)
 }
 
-// crossHostRedirect reports whether r follows a redirect to another host than the original request. The access token
-// is not sent there, as http.Client does not send the Authorization header there either.
+// crossHostRedirect reports whether r follows a redirect chain that went to another host than r at any hop, or that
+// cannot be followed back to the original request. Like http.Client, the access token is not sent again once the
+// chain left the host.
 func crossHostRedirect(r *http.Request) bool {
-	origin := r
-	for origin.Response != nil && origin.Response.Request != nil {
-		origin = origin.Response.Request
+	for prev := r; prev.Response != nil; {
+		if prev = prev.Response.Request; prev == nil || !strings.EqualFold(prev.URL.Host, r.URL.Host) {
+			return true
+		}
 	}
-	return origin != r && !strings.EqualFold(origin.URL.Host, r.URL.Host)
+	return false
 }
 
 // accessToken returns the access token of the session.
