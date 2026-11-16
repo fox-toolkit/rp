@@ -16,6 +16,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -66,6 +67,8 @@ type Options struct {
 	AccessTokenTTL time.Duration
 	// UserInfoStatus is the status of the UserInfo responses, when it is not zero.
 	UserInfoStatus int
+	// SignedUserInfo sends the UserInfo responses as JWTs signed by the provider key.
+	SignedUserInfo bool
 	// RotateRefreshTokens issues a new refresh token on every refresh. Reusing a refresh token then revokes every
 	// token issued from it.
 	RotateRefreshTokens bool
@@ -102,6 +105,7 @@ type Server struct {
 	requests    []RequestObject
 	opts        Options
 	refreshes   int
+	keySets     int
 	mu          sync.Mutex
 }
 
@@ -219,6 +223,13 @@ func (s *Server) Refreshes() int {
 	return s.refreshes
 }
 
+// KeySetRequests returns the number of key set requests served by the provider.
+func (s *Server) KeySetRequests() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.keySets
+}
+
 // RotateKey replaces the provider key with a new key, published with a new key ID.
 func (s *Server) RotateKey() {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -306,6 +317,7 @@ func (s *Server) jwks(w http.ResponseWriter, _ *http.Request) {
 		Use:       "sig",
 	}}
 	s.mu.Lock()
+	s.keySets++
 	if s.opts.DecoyKeys {
 		keys = append(keys,
 			map[string]string{"kty": "unknown", "kid": "decoy-kty"},
@@ -527,6 +539,11 @@ func (s *Server) userInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	info := map[string]any{"sub": g.subject}
 	maps.Copy(info, s.opts.UserInfo)
+	if s.opts.SignedUserInfo {
+		w.Header().Set("Content-Type", "application/jwt")
+		_, _ = io.WriteString(w, s.Sign("JWT", info))
+		return
+	}
 	writeJSON(w, http.StatusOK, info)
 }
 

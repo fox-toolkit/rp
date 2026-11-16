@@ -226,6 +226,7 @@ func TestRefreshUserInfo(t *testing.T) {
 		{name: "updated", update: func(o *oidctest.Options) { o.UserInfo = map[string]any{"groups": []any{"ops"}} }, status: http.StatusOK, groups: []any{"ops"}},
 		{name: "updated stateful", update: func(o *oidctest.Options) { o.UserInfo = map[string]any{"groups": []any{"ops"}} }, status: http.StatusOK, groups: []any{"ops"}, stateful: true},
 		{name: "updated dpop", update: func(o *oidctest.Options) { o.UserInfo = map[string]any{"groups": []any{"ops"}} }, status: http.StatusOK, groups: []any{"ops"}, dpop: true},
+		{name: "updated signed", update: func(o *oidctest.Options) { o.UserInfo, o.SignedUserInfo = map[string]any{"groups": []any{"ops"}}, true }, status: http.StatusOK, groups: []any{"ops"}},
 		{name: "request failed", update: func(o *oidctest.Options) { o.UserInfoStatus = http.StatusInternalServerError }, status: http.StatusOK, groups: []any{"dev"}},
 		{name: "sub changed", update: func(o *oidctest.Options) { o.UserInfo = map[string]any{"sub": "mallory"} }, status: http.StatusUnauthorized},
 	}
