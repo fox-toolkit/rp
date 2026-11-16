@@ -32,7 +32,7 @@ func (rp *relyingParty) requestUserInfo(ctx context.Context, client *http.Client
 		return "", nil, err
 	}
 	token.SetAuthHeader(req)
-	resp, err := client.Do(req) //nolint:gosec // userinfo endpoint from the provider metadata, checked by NewProvider
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", nil, err
 	}
