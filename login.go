@@ -28,6 +28,8 @@ const (
 	loginTimeout = 15 * time.Minute
 	// maxPendingLogins bounds the login cookies of a browser, which abandoned or forced logins would pile up.
 	maxPendingLogins = 3
+	// maxLoginCookies bounds the login cookies that a login start decrypts.
+	maxLoginCookies = 8
 	// maxReturnURL bounds the return URL in the login cookie. A page of another site can choose it, and escaped JSON
 	// characters such as & take 6 bytes.
 	maxReturnURL = 1024
@@ -227,7 +229,6 @@ func (rp *relyingParty) trimPendingLogins(h http.Header, cookies []*http.Cookie)
 	type pending struct {
 		spec    cookieSpec
 		created int64
-		chunks  int
 	}
 	var logins []pending
 	seen := make(map[string]bool)
@@ -240,22 +241,25 @@ func (rp *relyingParty) trimPendingLogins(h http.Header, cookies []*http.Cookie)
 		if seen[id] {
 			continue
 		}
+		if len(seen) == maxLoginCookies {
+			break
+		}
 		seen[id] = true
 		spec := rp.loginCookie(id)
-		data, chunks, err := spec.read(cookies, rp.aead)
+		data, _, err := spec.read(cookies, rp.aead)
 		var ls loginState
 		if err != nil || json.Unmarshal(data, &ls) != nil {
-			spec.clear(h, max(chunks, 1))
+			spec.clearSent(h, cookies)
 			continue
 		}
-		logins = append(logins, pending{spec: spec, created: ls.Created, chunks: chunks})
+		logins = append(logins, pending{spec: spec, created: ls.Created})
 	}
 	if len(logins) < maxPendingLogins {
 		return
 	}
 	slices.SortFunc(logins, func(a, b pending) int { return cmp.Compare(b.created, a.created) })
 	for _, l := range logins[maxPendingLogins-1:] {
-		l.spec.clear(h, l.chunks)
+		l.spec.clearSent(h, cookies)
 	}
 }
 

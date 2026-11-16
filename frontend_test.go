@@ -348,6 +348,16 @@ func TestTrustedOrigins(t *testing.T) {
 		}
 	})
 
+	t.Run("upgrade", func(t *testing.T) {
+		cookies := e.loggedIn(t)
+		upgrade := func(origin string) http.Header {
+			return http.Header{"Connection": {"Upgrade"}, "Upgrade": {"websocket"}, "Origin": {origin}}
+		}
+		assert.Equal(t, http.StatusOK, e.do(http.MethodGet, "/api", cookies, upgrade(appOrigin)).Code)
+		assert.Equal(t, http.StatusOK, e.do(http.MethodGet, "/api", cookies, upgrade("https://spa.example.com")).Code)
+		assert.Equal(t, http.StatusForbidden, e.do(http.MethodGet, "/api", cookies, upgrade("https://evil.example.com")).Code)
+	})
+
 	t.Run("logout", func(t *testing.T) {
 		cookies := e.loggedIn(t)
 		s, _, err := e.fe.rp.readSession(t.Context(), cookies)

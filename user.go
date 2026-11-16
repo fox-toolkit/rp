@@ -95,8 +95,23 @@ func (s *session) claims() (map[string]any, error) {
 		delete(claims, name)
 	}
 	if len(s.UserInfo) > 0 {
+		// Do NOT mixes the ID token and UserInfo source.
+		email, hasEmail := claims["email"]
+		verified, hasVerified := claims["email_verified"]
+		delete(claims, "email")
+		delete(claims, "email_verified")
 		if err := json.Unmarshal(s.UserInfo, &claims); err != nil {
 			return nil, err
+		}
+		_, infoEmail := claims["email"]
+		_, infoVerified := claims["email_verified"]
+		if !infoEmail && !infoVerified {
+			if hasEmail {
+				claims["email"] = email
+			}
+			if hasVerified {
+				claims["email_verified"] = verified
+			}
 		}
 	}
 	return claims, nil

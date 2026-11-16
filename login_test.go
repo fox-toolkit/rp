@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -525,6 +526,23 @@ func TestLoginPendingLimit(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, e.serve(callbacks[0], cookies).Code)
 	assert.Equal(t, http.StatusFound, e.serve(callbacks[len(callbacks)-1], cookies).Code)
+}
+
+func TestLoginInvalidCookies(t *testing.T) {
+	e := newTestEnv(t, oidctest.Options{})
+	var cookies []*http.Cookie
+	for i := range 200 {
+		cookies = append(cookies, &http.Cookie{Name: "__Host-Http-BFF-Login-" + strconv.Itoa(i) + ".199", Value: "x"})
+	}
+	rec := e.serve("/bff/login", cookies)
+	require.Equal(t, http.StatusFound, rec.Code)
+	cleared := 0
+	for _, line := range rec.Header().Values("Set-Cookie") {
+		if strings.Contains(line, "Max-Age=0") {
+			cleared++
+		}
+	}
+	assert.Equal(t, maxLoginCookies, cleared)
 }
 
 func applySetCookies(t *testing.T, cookies []*http.Cookie, h http.Header) []*http.Cookie {

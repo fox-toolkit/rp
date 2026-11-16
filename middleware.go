@@ -180,13 +180,24 @@ func addSetCookies(dst, src http.Header) {
 var errCSRFHeader = errors.New("missing or invalid csrf header")
 
 func (rp *relyingParty) checkCSRF(r *http.Request) error {
-	if err := rp.cop.Check(r); err != nil {
+	if err := rp.checkOrigin(r); err != nil {
 		return err
 	}
 	if rp.cfg.csrfHeader != "" && r.Header.Get(rp.cfg.csrfHeader) != rp.cfg.csrfValue {
 		return errCSRFHeader
 	}
 	return nil
+}
+
+// checkOrigin runs the cross-origin check. A protocol upgrade is checked like an unsafe method, because the
+// initiating page can read the upgraded connection.
+func (rp *relyingParty) checkOrigin(r *http.Request) error {
+	if r.Header.Get("Upgrade") == "" {
+		return rp.cop.Check(r)
+	}
+	cp := *r
+	cp.Method = http.MethodPost
+	return rp.cop.Check(&cp)
 }
 
 // sessionError responds to a failure to load or save the session.
@@ -388,6 +399,8 @@ func (w *cookieWriter) commit() {
 	if len(w.cookies) > 0 {
 		h := w.Header()
 		h["Set-Cookie"] = append(h["Set-Cookie"], w.cookies...)
+		// A shared cache must not replay the session cookie to another user.
+		h.Set("Cache-Control", "no-store")
 	}
 }
 

@@ -285,11 +285,13 @@ func (rp *relyingParty) writeSession(ctx context.Context, h http.Header, s *sess
 }
 
 func (rp *relyingParty) deleteSession(ctx context.Context, h http.Header, st sessionState) error {
-	rp.cookie.clear(h, st.chunks)
-	if rp.cfg.store == nil || st.id == "" {
-		return nil
+	if rp.cfg.store != nil && st.id != "" {
+		if err := rp.cfg.store.Delete(ctx, st.id); err != nil {
+			return err
+		}
 	}
-	return rp.cfg.store.Delete(ctx, st.id)
+	rp.cookie.clear(h, st.chunks)
+	return nil
 }
 
 // endSession deletes the session and revokes its refresh token. It holds the lock of the session, so it waits for a
