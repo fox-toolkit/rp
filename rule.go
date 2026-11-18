@@ -92,6 +92,9 @@ func lower(c byte) byte {
 // Require returns a [fox.RouteOption] that lets [Proxy.Authenticate] respond with 403 Forbidden to a user who is not
 // granted access by all the rules, in addition to the rules of [WithAccessRule]. [Frontend.Authenticate] responds with
 // 500 Internal Server Error to a route with rules. It panics if a rule is nil.
+//
+// For security reasons, use [fox.WithCollapseDotSegments] and [fox.WithMergeSlashes]. Without them, a request for
+// /app/x/../admin could reach a resource protected by the rules through a route that has no rules.
 func Require(rules ...Rule) fox.RouteOption {
 	for _, rule := range rules {
 		if rule == nil {
