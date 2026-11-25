@@ -34,6 +34,9 @@ type (
 // AllowAnonymous returns a [fox.RouteOption] that lets [Frontend.Authenticate] and [Proxy.Authenticate] pass the
 // requests without a session to the next handler. For these requests, [AccessToken] and [ResourceAccessToken] return
 // false, and [Transport] and [ResourceTransport] do not add an access token.
+//
+// For security reasons, use [fox.WithCollapseDotSegments] and [fox.WithMergeSlashes]. Without them, a request for
+// /public/../private could reach a protected resource through a route that allows anonymous requests.
 func AllowAnonymous() fox.RouteOption {
 	return fox.WithAnnotation(anonymousKey{}, true)
 }

@@ -74,8 +74,11 @@ func main() {
 		},
 		Transport: rp.Transport(nil),
 	}
-
-	f := fox.MustRouter()
+	
+	f := fox.MustRouter(
+		fox.WithCollapseDotSegments(fox.NormalizePath),
+		fox.WithMergeSlashes(fox.NormalizePath),
+	)
 	f.MustAdd(fox.MethodGet, "/bff/login", fe.LoginHandler())
 	f.MustAdd(fox.MethodGet, "/bff/callback", fe.CallbackHandler())
 	f.MustAdd([]string{http.MethodGet, http.MethodPost}, "/bff/logout", fe.LogoutHandler())
@@ -120,7 +123,10 @@ proxy := &httputil.ReverseProxy{
 	},
 }
 
-f := fox.MustRouter()
+f := fox.MustRouter(
+	fox.WithCollapseDotSegments(fox.NormalizePath),
+	fox.WithMergeSlashes(fox.NormalizePath),
+)
 f.MustAdd(fox.MethodGet, "/oauth2/callback", p.CallbackHandler())
 f.MustAdd(fox.MethodAny, "/oauth2/logout", p.LogoutHandler())
 
