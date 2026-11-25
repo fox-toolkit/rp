@@ -437,10 +437,14 @@ func TestProxyRequire(t *testing.T) {
 	e.mount(t, "/dev", Require(Group("dev")))
 	e.mount(t, "/public", AllowAnonymous(), Require(Group("admin")))
 	e.mount(t, "/team", AllowAnonymous(), Require(Group("dev")))
+	e.mount(t, "/dev-then-admin", Require(Group("dev")), Require(Group("admin")))
+	e.mount(t, "/admin-then-dev", Require(Group("admin")), Require(Group("dev")))
 	cookies := e.loggedIn(t)
 	assert.Equal(t, http.StatusForbidden, e.do(http.MethodGet, "/admin", cookies, nil).Code)
 	assert.Equal(t, http.StatusForbidden, e.do(http.MethodGet, "/admin", cookies, nil).Code)
 	assert.Equal(t, http.StatusOK, e.do(http.MethodGet, "/dev", cookies, nil).Code)
+	assert.Equal(t, http.StatusForbidden, e.do(http.MethodGet, "/dev-then-admin", cookies, nil).Code)
+	assert.Equal(t, http.StatusForbidden, e.do(http.MethodGet, "/admin-then-dev", cookies, nil).Code)
 
 	crossSite := http.Header{"Sec-Fetch-Site": {"cross-site"}, "X-Sub": {"admin"}}
 	assert.Equal(t, http.StatusOK, e.do(http.MethodPost, "/public", cookies, crossSite).Code)
@@ -449,7 +453,11 @@ func TestProxyRequire(t *testing.T) {
 	assert.Equal(t, http.StatusOK, e.do(http.MethodGet, "/team", cookies, nil).Code)
 	assert.True(t, e.identified)
 	assert.Equal(t, "alice", e.upstream().Get("X-Sub"))
-	assert.Panics(t, func() { Require(Group("admin"), nil) })
+}
+
+func TestRequireNilRule(t *testing.T) {
+	_, err := fox.MustRouter().Add(fox.MethodGet, "/", func(*fox.Context) {}, Require(Group("admin"), nil))
+	assert.ErrorIs(t, err, ErrInvalidConfig)
 }
 
 func TestRules(t *testing.T) {

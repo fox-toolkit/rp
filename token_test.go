@@ -382,7 +382,7 @@ func TestResourceErrors(t *testing.T) {
 		e := newTestEnv(t, oidctest.Options{InvalidTargets: []string{orders}}, WithResources(billing, orders))
 		u := newUpstream(t)
 		e.mountResourceProxy(t, "/billing/*{any}", u, billing)
-		e.mountResourceProxy(t, "/orders/*{any}", u, orders, ForResource(billing, orders))
+		e.mountResourceTransport(t, "/orders/*{any}", u, orders, ForResource(billing, orders))
 		e.mountProxy(t, "/api/*{any}", u)
 		cookies := e.loggedIn(t)
 
@@ -414,7 +414,7 @@ func TestResourceErrors(t *testing.T) {
 				e := newTestEnv(t, oidctest.Options{}, append(tc.opts, WithResources(billing, orders))...)
 				u := newUpstream(t)
 				calls := e.countRefreshes()
-				e.mountResourceProxy(t, "/billing/*{any}", u, billing, ForResource(billing, orders))
+				e.mountResourceProxy(t, "/billing/*{any}", u, billing, ForResource(orders))
 				e.mountResourceProxy(t, "/public/*{any}", u, billing, AllowAnonymous())
 				cookies := e.loggedIn(t)
 				s, _, err := e.fe.rp.readSession(t.Context(), cookies)
@@ -534,21 +534,6 @@ func TestResourceAccessTokenNotFound(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func TestForResourceLastApplies(t *testing.T) {
-	e := newTestEnv(t, oidctest.Options{}, WithResources(billing, orders))
-	found := make(chan bool, 2)
-	e.mountHandler(t, "/api", func(c *fox.Context) {
-		_, ok := ResourceAccessToken(c.Request().Context(), billing)
-		found <- ok
-		_, ok = ResourceAccessToken(c.Request().Context(), orders)
-		found <- ok
-	}, ForResource(billing), ForResource(orders))
-
-	require.Equal(t, http.StatusOK, e.do(http.MethodGet, "/api", e.loggedIn(t), nil).Code)
-	assert.False(t, <-found)
-	assert.True(t, <-found)
-}
-
 func TestResourceTransportDPoP(t *testing.T) {
 	e := newTestEnv(t, oidctest.Options{}, WithResources(billing), WithDPoP(true))
 	u := newUpstream(t)
@@ -568,7 +553,7 @@ func TestResourceTransportDPoP(t *testing.T) {
 func TestResourceCookieWrittenOnce(t *testing.T) {
 	e := newTestEnv(t, oidctest.Options{AccessTokenTTL: 10 * time.Minute}, WithResources(billing, orders))
 	u := newUpstream(t)
-	e.mountResourceProxy(t, "/billing/*{any}", u, billing, ForResource(billing, orders))
+	e.mountResourceProxy(t, "/billing/*{any}", u, billing, ForResource(orders))
 	cookies := e.loggedIn(t)
 	e.skipAhead(DefaultIdleTimeout/2 + time.Second)
 

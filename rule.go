@@ -5,6 +5,7 @@
 package rp
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
@@ -91,17 +92,19 @@ func lower(c byte) byte {
 
 // Require returns a [fox.RouteOption] that lets [Proxy.Authenticate] respond with 403 Forbidden to a user who is not
 // granted access by all the rules, in addition to the rules of [WithAccessRule]. [Frontend.Authenticate] responds with
-// 500 Internal Server Error to a route with rules. It panics if a rule is nil.
+// 500 Internal Server Error to a route with rules.
 //
 // For security reasons, use [fox.WithCollapseDotSegments] and [fox.WithMergeSlashes]. Without them, a request for
 // /app/x/../admin could reach a resource protected by the rules through a route that has no rules.
 func Require(rules ...Rule) fox.RouteOption {
-	for _, rule := range rules {
-		if rule == nil {
-			panic("rp: nil rule")
+	rules = slices.Clone(rules)
+	return fox.WithAnnotationFunc(rulesKey{}, func(prev any) (any, error) {
+		if slices.ContainsFunc(rules, func(rule Rule) bool { return rule == nil }) {
+			return nil, fmt.Errorf("%w: nil access rule", ErrInvalidConfig)
 		}
-	}
-	return fox.WithAnnotation(rulesKey{}, slices.Clone(rules))
+		required, _ := prev.([]Rule)
+		return slices.Concat(required, rules), nil
+	})
 }
 
 func routeRules(route *fox.Route) []Rule {
