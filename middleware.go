@@ -45,7 +45,11 @@ func AllowAnonymous() fox.RouteOption {
 // tokens of the resources for the next handler, as defined by RFC 8707. The resources must be declared with
 // [WithResources].
 func ForResource(resources ...string) fox.RouteOption {
-	return fox.WithAnnotation(resourcesKey{}, slices.Clone(resources))
+	resources = slices.Clone(resources)
+	return fox.WithAnnotationFunc(resourcesKey{}, func(prev any) (any, error) {
+		declared, _ := prev.([]string)
+		return slices.Concat(declared, resources), nil
+	})
 }
 
 // requestState is attached to the request context by the middleware. A nil session is an anonymous request. It does
