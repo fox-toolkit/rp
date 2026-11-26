@@ -476,10 +476,9 @@ func TestCallbackReloginWithStaleChunks(t *testing.T) {
 	require.Len(t, sessionCookieLines(rec.Header()), 1)
 
 	jar := append(fresh, old[1:]...)
-	s, st, err := e.fe.rp.readSession(t.Context(), jar)
+	s, _, err := e.fe.rp.readSession(t.Context(), jar)
 	require.NoError(t, err)
 	assert.Equal(t, "alice", s.Subject)
-	assert.Equal(t, len(old), st.chunks)
 }
 
 func TestCallbackDeletesSessionsOfSameSID(t *testing.T) {
@@ -577,6 +576,74 @@ func TestLoginInvalidCookies(t *testing.T) {
 		}
 	}
 	assert.Equal(t, maxLoginCookies, cleared)
+}
+
+func TestDeletesOnlyRequestChunks(t *testing.T) {
+	const n = 512
+	fillersThen := func(name string) []*http.Cookie {
+		var cookies []*http.Cookie
+		for i := range n - 1 {
+			cookies = append(cookies, &http.Cookie{Name: "filler" + strconv.Itoa(i), Value: "x"})
+		}
+		return append(cookies, &http.Cookie{Name: name, Value: "x"})
+	}
+	repeated := func(name string) []*http.Cookie {
+		var cookies []*http.Cookie
+		for range n {
+			cookies = append(cookies, &http.Cookie{Name: name, Value: "x"})
+		}
+		return cookies
+	}
+
+	fe := newTestEnv(t, oidctest.Options{})
+	fe.mount(t, "/api/*{any}")
+	fe.mountLogout(t)
+	pe := newProxyEnv(t, oidctest.Options{})
+	targets := []struct {
+		name      string
+		session   string
+		callback  string
+		login     string
+		logout    string
+		protected string
+		serve     func(target string, cookies []*http.Cookie) *httptest.ResponseRecorder
+	}{
+		{name: "frontend", session: frontendCookie, callback: "/bff/callback", login: "/bff/login", logout: "/bff/logout", protected: "/api/x", serve: fe.serve},
+		{
+			name: "proxy", session: proxyCookie, callback: "/oauth2/callback", login: "/app/x", logout: "/oauth2/logout", protected: "/app/x",
+			serve: func(target string, cookies []*http.Cookie) *httptest.ResponseRecorder {
+				return pe.do(http.MethodGet, target, cookies, navigate)
+			},
+		},
+	}
+	for _, tg := range targets {
+		state := randomString()
+		long := strings.Repeat("s", 4000)
+		last := "." + strconv.Itoa(n-1)
+		cases := []struct {
+			name    string
+			target  string
+			cookies []*http.Cookie
+		}{
+			{name: "callback with a high chunk index", target: tg.callback + "?state=" + state, cookies: fillersThen(tg.session + "-Login-" + state + last)},
+			{name: "callback with a long state", target: tg.callback + "?state=" + long, cookies: fillersThen(tg.session + "-Login-" + long + last)},
+			{name: "session with a high chunk index", target: tg.protected, cookies: fillersThen(tg.session + last)},
+			{name: "logout with a high chunk index", target: tg.logout, cookies: fillersThen(tg.session + last)},
+			{name: "login with one chunk repeated", target: tg.login, cookies: repeated(tg.session + "-Login-" + state + ".0")},
+		}
+		for _, tc := range cases {
+			t.Run(tg.name+"/"+tc.name, func(t *testing.T) {
+				rec := tg.serve(tc.target, tc.cookies)
+				deleted := 0
+				for _, line := range rec.Header().Values("Set-Cookie") {
+					if strings.Contains(line, "Max-Age=0") {
+						deleted++
+					}
+				}
+				assert.Equal(t, 1, deleted)
+			})
+		}
+	}
 }
 
 func applySetCookies(t *testing.T, cookies []*http.Cookie, h http.Header) []*http.Cookie {

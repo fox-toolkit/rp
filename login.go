@@ -163,7 +163,7 @@ func (rp *relyingParty) startLogin(w http.ResponseWriter, r *http.Request, ls lo
 	rp.trimPendingLogins(w.Header(), r.Cookies())
 	data, err := json.Marshal(ls)
 	if err == nil {
-		err = rp.loginCookie(state).write(w.Header(), rp.aead, data, int(loginTimeout.Seconds()), 0)
+		err = rp.loginCookie(state).write(w.Header(), rp.aead, data, int(loginTimeout.Seconds()), nil)
 	}
 	if err != nil {
 		rp.logFailed(r, "login cookie", err)
@@ -246,10 +246,10 @@ func (rp *relyingParty) trimPendingLogins(h http.Header, cookies []*http.Cookie)
 		}
 		seen[id] = true
 		spec := rp.loginCookie(id)
-		data, _, err := spec.read(cookies, rp.aead)
+		data, err := spec.read(cookies, rp.aead)
 		var ls loginState
 		if err != nil || json.Unmarshal(data, &ls) != nil {
-			spec.clearSent(h, cookies)
+			spec.clear(h, cookies)
 			continue
 		}
 		logins = append(logins, pending{spec: spec, created: ls.Created})
@@ -259,7 +259,7 @@ func (rp *relyingParty) trimPendingLogins(h http.Header, cookies []*http.Cookie)
 	}
 	slices.SortFunc(logins, func(a, b pending) int { return cmp.Compare(b.created, a.created) })
 	for _, l := range logins[maxPendingLogins-1:] {
-		l.spec.clearSent(h, cookies)
+		l.spec.clear(h, cookies)
 	}
 }
 
@@ -289,8 +289,8 @@ func (rp *relyingParty) callbackHandler(allow func(*session) (bool, error), forb
 		}
 		cookies := r.Cookies()
 		spec := rp.loginCookie(state)
-		data, chunks, err := spec.read(cookies, rp.aead)
-		spec.clear(h, chunks)
+		data, err := spec.read(cookies, rp.aead)
+		spec.clear(h, cookies)
 		if err != nil {
 			rp.logRejected(r, "invalid callback", fmt.Errorf("login cookie: %w", err))
 			badRequest(w)
@@ -364,7 +364,7 @@ func (rp *relyingParty) callbackHandler(allow func(*session) (bool, error), forb
 		if len(rp.cfg.resources) > 0 && s.RefreshToken == "" {
 			rp.logger.WarnContext(r.Context(), "resources declared but no refresh token", "path", r.URL.Path)
 		}
-		if err := rp.writeSession(r.Context(), h, s, sessionState{chunks: prev.chunks}); err != nil {
+		if err := rp.writeSession(r.Context(), h, s, sessionState{cookies: cookies}); err != nil {
 			rp.logFailed(r, "session store", err)
 			internalError(w)
 			return

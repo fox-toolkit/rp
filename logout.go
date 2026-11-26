@@ -79,7 +79,7 @@ func (rp *relyingParty) logout(w http.ResponseWriter, r *http.Request, verify fu
 	}
 	s, st, err := rp.readSession(r.Context(), r.Cookies())
 	if errors.Is(err, errNoSession) {
-		rp.cookie.clear(w.Header(), st.chunks)
+		rp.cookie.clear(w.Header(), st.cookies)
 		http.Redirect(w, r, rp.endSessionURL(""), http.StatusSeeOther)
 		return
 	}

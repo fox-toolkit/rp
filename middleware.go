@@ -222,10 +222,9 @@ func (rp *relyingParty) currentSession(r *http.Request, h http.Header, resources
 	ctx := r.Context()
 	s, st, err := rp.readSession(ctx, r.Cookies())
 	if errors.Is(err, errNoSession) {
-		if st.chunks > 0 {
+		if rp.cookie.clear(h, st.cookies) > 0 {
 			rp.logger.InfoContext(ctx, "invalid or ended session", "path", r.URL.Path)
 		}
-		rp.cookie.clear(h, st.chunks)
 		return nil, nil
 	}
 	if err != nil {
@@ -304,7 +303,7 @@ func (rp *relyingParty) currentSession(r *http.Request, h http.Header, resources
 			// The session was ended by another request, such as a back-channel logout, while this one was running. Do not
 			// revoke the refresh token. A login in the same provider session may have replaced this session.
 			rp.logger.InfoContext(ctx, "session ended during the request", "path", r.URL.Path)
-			rp.cookie.clear(h, st.chunks)
+			rp.cookie.clear(h, st.cookies)
 			return nil, nil
 		}
 		if err != nil {
