@@ -50,7 +50,7 @@ func TestSessionStateless(t *testing.T) {
 	got, st, err := fe.rp.readSession(t.Context(), requestCookies(t, h))
 	require.NoError(t, err)
 	assert.Equal(t, s, got)
-	assert.Equal(t, sessionState{chunks: 1}, st)
+	assert.Empty(t, st.id)
 
 	h = make(http.Header)
 	require.NoError(t, fe.rp.deleteSession(t.Context(), h, st))
@@ -148,7 +148,7 @@ func TestSessionStateful(t *testing.T) {
 
 	t.Run("new session gets a new key", func(t *testing.T) {
 		h := make(http.Header)
-		require.NoError(t, fe.rp.writeSession(ctx, h, testSession(), sessionState{chunks: st.chunks}))
+		require.NoError(t, fe.rp.writeSession(ctx, h, testSession(), sessionState{cookies: st.cookies}))
 		_, other, err := fe.rp.readSession(ctx, requestCookies(t, h))
 		require.NoError(t, err)
 		assert.NotEqual(t, st.id, other.id)
@@ -170,9 +170,8 @@ func TestSessionStateful(t *testing.T) {
 		h := make(http.Header)
 		require.NoError(t, fe.rp.deleteSession(ctx, h, st))
 		assert.Len(t, h.Values("Set-Cookie"), 1)
-		_, st, err := fe.rp.readSession(ctx, cookies)
+		_, _, err := fe.rp.readSession(ctx, cookies)
 		assert.ErrorIs(t, err, errNoSession)
-		assert.Equal(t, 1, st.chunks)
 	})
 }
 
@@ -183,7 +182,7 @@ func TestSessionVersion(t *testing.T) {
 	data, err := json.Marshal(s)
 	require.NoError(t, err)
 	h := make(http.Header)
-	require.NoError(t, fe.rp.cookie.write(h, fe.rp.aead, data, 0, 0))
+	require.NoError(t, fe.rp.cookie.write(h, fe.rp.aead, data, 0, nil))
 	_, _, err = fe.rp.readSession(t.Context(), requestCookies(t, h))
 	assert.ErrorIs(t, err, errNoSession)
 }

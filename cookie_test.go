@@ -62,7 +62,7 @@ func TestCookieRoundTrip(t *testing.T) {
 	for _, size := range []int{1, maxChunkSize, 3 * maxChunkSize} {
 		plaintext := bytes.Repeat([]byte{'a'}, size)
 		h := make(http.Header)
-		require.NoError(t, sessionCookie.write(h, aead, plaintext, 0, 0))
+		require.NoError(t, sessionCookie.write(h, aead, plaintext, 0, nil))
 
 		lines := h.Values("Set-Cookie")
 		for _, line := range lines {
@@ -71,22 +71,21 @@ func TestCookieRoundTrip(t *testing.T) {
 			assert.Contains(t, line, "; Path=/; HttpOnly; Secure; SameSite=Strict")
 		}
 
-		got, n, err := sessionCookie.read(requestCookies(t, h), aead)
+		got, err := sessionCookie.read(requestCookies(t, h), aead)
 		require.NoError(t, err)
 		assert.Equal(t, plaintext, got)
-		assert.Equal(t, len(lines), n)
 	}
 }
 
 func TestCookieWriteDeletesStaleChunks(t *testing.T) {
 	aead := newGCMAEAD(t)
 	h := make(http.Header)
-	require.NoError(t, sessionCookie.write(h, aead, bytes.Repeat([]byte{'a'}, 2*maxChunkSize), 0, 0))
-	prev := len(h.Values("Set-Cookie"))
-	require.Equal(t, 3, prev)
+	require.NoError(t, sessionCookie.write(h, aead, bytes.Repeat([]byte{'a'}, 2*maxChunkSize), 0, nil))
+	old := requestCookies(t, h)
+	require.Len(t, old, 3)
 
 	h = make(http.Header)
-	require.NoError(t, sessionCookie.write(h, aead, []byte("a"), 3600, prev))
+	require.NoError(t, sessionCookie.write(h, aead, []byte("a"), 3600, old))
 	lines := h.Values("Set-Cookie")
 	require.Len(t, lines, 3)
 	assert.Contains(t, lines[0], "__Host-Http-BFF.0=")
@@ -98,38 +97,29 @@ func TestCookieWriteDeletesStaleChunks(t *testing.T) {
 func TestCookieReadIgnoresStaleChunks(t *testing.T) {
 	aead := newGCMAEAD(t)
 	h := make(http.Header)
-	require.NoError(t, sessionCookie.write(h, aead, bytes.Repeat([]byte{'a'}, 2*maxChunkSize), 0, 0))
+	require.NoError(t, sessionCookie.write(h, aead, bytes.Repeat([]byte{'a'}, 2*maxChunkSize), 0, nil))
 	old := requestCookies(t, h)
 	require.Len(t, old, 3)
 
 	h = make(http.Header)
-	require.NoError(t, sessionCookie.write(h, aead, []byte("b"), 0, 0))
+	require.NoError(t, sessionCookie.write(h, aead, []byte("b"), 0, nil))
 	cookies := append(requestCookies(t, h), old[1:]...)
 
-	got, n, err := sessionCookie.read(cookies, aead)
+	got, err := sessionCookie.read(cookies, aead)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("b"), got)
-	assert.Equal(t, 3, n)
 }
 
 func TestCookieClear(t *testing.T) {
-	h := make(http.Header)
-	loginCookie(sessionCookie, "abc").clear(h, 2)
-	assert.Equal(t, []string{
-		"__Host-Http-BFF-Login-abc.0=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax",
-		"__Host-Http-BFF-Login-abc.1=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax",
-	}, h.Values("Set-Cookie"))
-}
-
-func TestCookieClearPresent(t *testing.T) {
 	cookies := []*http.Cookie{
-		{Name: "__Host-Http-BFF-Login-abc.0", Value: "x"},
 		{Name: "__Host-Http-BFF-Login-abc.7", Value: "x"},
+		{Name: "__Host-Http-BFF-Login-abc.0", Value: "x"},
+		{Name: "__Host-Http-BFF-Login-abc.7", Value: "y"},
 		{Name: "__Host-Http-BFF-Login-abc.x", Value: "x"},
 		{Name: "__Host-Http-BFF-Login-other.0", Value: "x"},
 	}
 	h := make(http.Header)
-	loginCookie(sessionCookie, "abc").clearSent(h, cookies)
+	assert.Equal(t, 2, loginCookie(sessionCookie, "abc").clear(h, cookies))
 	assert.Equal(t, []string{
 		"__Host-Http-BFF-Login-abc.0=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax",
 		"__Host-Http-BFF-Login-abc.7=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax",
@@ -139,16 +129,15 @@ func TestCookieClearPresent(t *testing.T) {
 func TestCookieReadInvalid(t *testing.T) {
 	aead := newGCMAEAD(t)
 	h := make(http.Header)
-	require.NoError(t, sessionCookie.write(h, aead, bytes.Repeat([]byte{'a'}, 2*maxChunkSize), 0, 0))
+	require.NoError(t, sessionCookie.write(h, aead, bytes.Repeat([]byte{'a'}, 2*maxChunkSize), 0, nil))
 	valid := requestCookies(t, h)
 	require.Len(t, valid, 3)
 
 	cookie := func(name, value string) *http.Cookie { return &http.Cookie{Name: name, Value: value} }
 
 	t.Run("no cookie", func(t *testing.T) {
-		_, n, err := sessionCookie.read([]*http.Cookie{cookie("other", "x")}, aead)
+		_, err := sessionCookie.read([]*http.Cookie{cookie("other", "x")}, aead)
 		assert.ErrorIs(t, err, errNoCookie)
-		assert.Zero(t, n)
 	})
 
 	cases := []struct {
@@ -177,7 +166,7 @@ func TestCookieReadInvalid(t *testing.T) {
 			if tc.spec.name != "" {
 				spec = tc.spec
 			}
-			_, _, err := spec.read(tc.cookies, aead)
+			_, err := spec.read(tc.cookies, aead)
 			assert.ErrorIs(t, err, errInvalidCookie)
 		})
 	}
@@ -186,7 +175,7 @@ func TestCookieReadInvalid(t *testing.T) {
 func FuzzCookieRead(f *testing.F) {
 	aead := newGCMAEAD(f)
 	h := make(http.Header)
-	require.NoError(f, sessionCookie.write(h, aead, bytes.Repeat([]byte{'a'}, maxChunkSize), 0, 0))
+	require.NoError(f, sessionCookie.write(h, aead, bytes.Repeat([]byte{'a'}, maxChunkSize), 0, nil))
 	var seed []string
 	for _, c := range requestCookies(f, h) {
 		seed = append(seed, c.String())
@@ -199,9 +188,8 @@ func FuzzCookieRead(f *testing.F) {
 		if err != nil {
 			return
 		}
-		plaintext, n, err := sessionCookie.read(cookies, aead)
+		plaintext, err := sessionCookie.read(cookies, aead)
 		if err == nil {
-			assert.Positive(t, n)
 			assert.Equal(t, bytes.Repeat([]byte{'a'}, maxChunkSize), plaintext)
 		}
 	})

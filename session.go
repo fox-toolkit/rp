@@ -193,18 +193,18 @@ func randomString() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// sessionState describes the session cookie of a request, with its number of chunks and, for a stateful frontend, its
-// store id. An empty id means the next write creates a new session.
+// sessionState describes the session cookie of a request, with the cookies of the request and, for a stateful
+// frontend, its store id. An empty id means the next write creates a new session.
 type sessionState struct {
-	id     string
-	chunks int
+	id      string
+	cookies []*http.Cookie
 }
 
 // readSession returns the session of the request. It returns errNoSession when the request has no valid session, with
 // the state of the cookie so it can be deleted.
 func (rp *relyingParty) readSession(ctx context.Context, cookies []*http.Cookie) (*session, sessionState, error) {
-	plaintext, chunks, err := rp.cookie.read(cookies, rp.aead)
-	st := sessionState{chunks: chunks}
+	plaintext, err := rp.cookie.read(cookies, rp.aead)
+	st := sessionState{cookies: cookies}
 	if err != nil {
 		return nil, st, errNoSession
 	}
@@ -246,7 +246,7 @@ func (rp *relyingParty) writeSession(ctx context.Context, h http.Header, s *sess
 		return err
 	}
 	if rp.cfg.store == nil {
-		return rp.cookie.write(h, rp.aead, data, 0, st.chunks)
+		return rp.cookie.write(h, rp.aead, data, 0, st.cookies)
 	}
 
 	var key []byte
@@ -281,7 +281,7 @@ func (rp *relyingParty) writeSession(ctx context.Context, h http.Header, s *sess
 	if err := rp.cfg.store.Create(ctx, st.id, r); err != nil {
 		return err
 	}
-	return rp.cookie.write(h, rp.aead, key, 0, st.chunks)
+	return rp.cookie.write(h, rp.aead, key, 0, st.cookies)
 }
 
 func (rp *relyingParty) deleteSession(ctx context.Context, h http.Header, st sessionState) error {
@@ -290,7 +290,7 @@ func (rp *relyingParty) deleteSession(ctx context.Context, h http.Header, st ses
 			return err
 		}
 	}
-	rp.cookie.clear(h, st.chunks)
+	rp.cookie.clear(h, st.cookies)
 	return nil
 }
 
